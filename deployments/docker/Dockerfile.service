@@ -1,0 +1,41 @@
+# Build stage
+FROM golang:1.23-alpine AS builder
+
+ARG SERVICE
+
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+COPY api/go.mod api/go.sum ./api/
+COPY gen/go/go.mod gen/go/go.sum ./gen/go/
+
+# Copy internal modules
+COPY internal/ ./internal/
+
+# Copy service code
+COPY services/ ./services/
+
+# Copy cmd
+COPY cmd/ ./cmd/
+
+# Copy go.work
+COPY go.work ./
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux go build -o /service ./cmd/${SERVICE}
+
+# Runtime stage
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /app
+
+COPY --from=builder /service /app/service
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/service"]
