@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.image;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/imagepb";
+
+import "google/protobuf/timestamp.proto";
+
+message Image {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string os = 4;
+  string os_version = 5;
+  string architecture = 6;
+  ImageType type = 7;
+  int64 size_bytes = 8;
+  ImageStatus status = 9;
+  string checksum = 10;
+  repeated string tags = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+enum ImageType {
+  IMAGE_TYPE_UNSPECIFIED = 0;
+  IMAGE_TYPE_OS = 1;
+  IMAGE_TYPE_APPLICATION = 2;
+  IMAGE_TYPE_SNAPSHOT = 3;
+}
+
+enum ImageStatus {
+  IMAGE_STATUS_UNSPECIFIED = 0;
+  IMAGE_STATUS_READY = 1;
+  IMAGE_STATUS_DOWNLOADING = 2;
+  IMAGE_STATUS_PROCESSING = 3;
+  IMAGE_STATUS_ERROR = 4;
+}
+
+message UploadImageRequest {
+  string name = 1;
+  string description = 2;
+  string os = 3;
+  string os_version = 4;
+  string architecture = 5;
+  ImageType type = 6;
+  repeated string tags = 7;
+}
+
+message UploadImageResponse {
+  Image image = 1;
+  string upload_url = 2;
+}
+
+message GetImageRequest {
+  string id = 1;
+}
+
+message GetImageResponse {
+  Image image = 1;
+}
+
+message ListImagesRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string os = 3;
+  string architecture = 4;
+  ImageType type = 5;
+  string search = 6;
+}
+
+message ListImagesResponse {
+  repeated Image images = 1;
+  int32 total = 2;
+}
+
+message DeleteImageRequest {
+  string id = 1;
+}
+
+message DeleteImageResponse {}
+
+message ImportImageRequest {
+  string url = 1;
+  string name = 2;
+  string os = 3;
+  string os_version = 4;
+  string architecture = 5;
+}
+
+message ImportImageResponse {
+  Image image = 1;
+}
+
+service ImageService {
+  rpc UploadImage(UploadImageRequest) returns (UploadImageResponse);
+  rpc GetImage(GetImageRequest) returns (GetImageResponse);
+  rpc ListImages(ListImagesRequest) returns (ListImagesResponse);
+  rpc DeleteImage(DeleteImageRequest) returns (DeleteImageResponse);
+  rpc ImportImage(ImportImageRequest) returns (ImportImageResponse);
+}
