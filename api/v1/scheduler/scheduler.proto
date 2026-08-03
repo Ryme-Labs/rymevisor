@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.scheduler;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/schedulerpb";
+
+import "google/protobuf/timestamp.proto";
+
+message ScheduleRequest {
+  string vm_id = 1;
+  SchedulingConstraints constraints = 2;
+  int32 priority = 3;
+  map<string, string> labels = 4;
+}
+
+message SchedulingConstraints {
+  string preferred_node = 1;
+  repeated string required_labels = 2;
+  repeated string preferred_labels = 3;
+  repeated string avoid_labels = 4;
+  bool require_gpu = 5;
+  string availability_zone = 6;
+}
+
+message ScheduleResponse {
+  string node_id = 1;
+  bool accepted = 2;
+  string reason = 3;
+}
+
+message CancelScheduleRequest {
+  string vm_id = 1;
+}
+
+message CancelScheduleResponse {}
+
+message ListScheduledJobsRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string node_id = 3;
+}
+
+message ScheduledJob {
+  string vm_id = 1;
+  string node_id = 2;
+  int32 priority = 3;
+  SchedulingConstraints constraints = 4;
+  google.protobuf.Timestamp scheduled_at = 5;
+}
+
+message ListScheduledJobsResponse {
+  repeated ScheduledJob jobs = 1;
+  int32 total = 2;
+}
+
+service SchedulerService {
+  rpc Schedule(ScheduleRequest) returns (ScheduleResponse);
+  rpc CancelSchedule(CancelScheduleRequest) returns (CancelScheduleResponse);
+  rpc ListScheduledJobs(ListScheduledJobsRequest) returns (ListScheduledJobsResponse);
+}
