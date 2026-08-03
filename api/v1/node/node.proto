@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.node;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/nodepb";
+
+import "google/protobuf/timestamp.proto";
+
+message Node {
+  string id = 1;
+  string name = 2;
+  string address = 3;
+  int32 port = 4;
+  NodeStatus status = 5;
+  NodeResources resources = 6;
+  NodeResources available = 7;
+  map<string, string> labels = 8;
+  map<string, string> metadata = 9;
+  google.protobuf.Timestamp last_heartbeat = 10;
+  google.protobuf.Timestamp created_at = 11;
+}
+
+enum NodeStatus {
+  NODE_STATUS_UNSPECIFIED = 0;
+  NODE_STATUS_ONLINE = 1;
+  NODE_STATUS_OFFLINE = 2;
+  NODE_STATUS_DRAINING = 3;
+  NODE_STATUS_MAINTENANCE = 4;
+  NODE_STATUS_ERROR = 5;
+}
+
+message NodeResources {
+  int32 total_cpus = 1;
+  int32 used_cpus = 2;
+  int64 total_memory_mb = 3;
+  int64 used_memory_mb = 4;
+  int64 total_storage_bytes = 5;
+  int64 used_storage_bytes = 6;
+  int32 total_gpus = 7;
+  int32 used_gpus = 8;
+}
+
+message RegisterNodeRequest {
+  string name = 1;
+  string address = 2;
+  int32 port = 3;
+  map<string, string> labels = 4;
+  NodeResources resources = 5;
+}
+
+message RegisterNodeResponse {
+  Node node = 1;
+}
+
+message GetNodeRequest {
+  string id = 1;
+}
+
+message GetNodeResponse {
+  Node node = 1;
+}
+
+message ListNodesRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  NodeStatus status = 3;
+  string search = 4;
+}
+
+message ListNodesResponse {
+  repeated Node nodes = 1;
+  int32 total = 2;
+}
+
+message UpdateNodeRequest {
+  string id = 1;
+  map<string, string> labels = 2;
+}
+
+message UpdateNodeResponse {
+  Node node = 1;
+}
+
+message DrainNodeRequest {
+  string id = 1;
+  int32 timeout_seconds = 2;
+}
+
+message DRAINNoderesponse {}
+
+message HeartbeatRequest {
+  string node_id = 1;
+  NodeResources available = 2;
+}
+
+message HeartbeatResponse {
+  bool ack = 1;
+}
+
+service NodeService {
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
+  rpc DrainNode(DrainNodeRequest) returns (DRAINNoderesponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
