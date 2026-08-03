@@ -1,0 +1,186 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.storage;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/storagepb";
+
+import "google/protobuf/timestamp.proto";
+
+message StoragePool {
+  string id = 1;
+  string name = 2;
+  StorageDriver driver = 3;
+  string path = 4;
+  int64 total_bytes = 5;
+  int64 used_bytes = 6;
+  bool encrypted = 7;
+  map<string, string> config = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+enum StorageDriver {
+  STORAGE_DRIVER_UNSPECIFIED = 0;
+  STORAGE_DRIVER_QCOW2 = 1;
+  STORAGE_DRIVER_LVM_THIN = 2;
+  STORAGE_DRIVER_ZFS = 3;
+  STORAGE_DRIVER_NFS = 4;
+  STORAGE_DRIVER_CEPH = 5;
+}
+
+message Volume {
+  string id = 1;
+  string name = 2;
+  string pool_id = 3;
+  int64 size_bytes = 4;
+  int64 used_bytes = 5;
+  VolumeStatus status = 6;
+  bool encrypted = 7;
+  repeated VolumeSnapshot snapshots = 8;
+  map<string, string> labels = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+enum VolumeStatus {
+  VOLUME_STATUS_UNSPECIFIED = 0;
+  VOLUME_STATUS_AVAILABLE = 1;
+  VOLUME_STATUS_IN_USE = 2;
+  VOLUME_STATUS_CREATING = 3;
+  VOLUME_STATUS_DELETING = 4;
+  VOLUME_STATUS_ERROR = 5;
+}
+
+message VolumeSnapshot {
+  string id = 1;
+  string volume_id = 2;
+  string name = 3;
+  int64 size_bytes = 4;
+  VolumeSnapshotStatus status = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+enum VolumeSnapshotStatus {
+  VOLUME_SNAPSHOT_STATUS_UNSPECIFIED = 0;
+  VOLUME_SNAPSHOT_STATUS_CREATING = 1;
+  VOLUME_SNAPSHOT_STATUS_READY = 2;
+  VOLUME_SNAPSHOT_STATUS_DELETED = 3;
+}
+
+message CreatePoolRequest {
+  string name = 1;
+  StorageDriver driver = 2;
+  string path = 3;
+  bool encrypted = 4;
+  map<string, string> config = 5;
+}
+
+message CreatePoolResponse {
+  StoragePool pool = 1;
+}
+
+message GetPoolRequest {
+  string id = 1;
+}
+
+message GetPoolResponse {
+  StoragePool pool = 1;
+}
+
+message ListPoolsRequest {}
+
+message ListPoolsResponse {
+  repeated StoragePool pools = 1;
+}
+
+message CreateVolumeRequest {
+  string name = 1;
+  string pool_id = 2;
+  int64 size_bytes = 3;
+  bool encrypted = 4;
+  map<string, string> labels = 5;
+}
+
+message CreateVolumeResponse {
+  Volume volume = 1;
+}
+
+message GetVolumeRequest {
+  string id = 1;
+}
+
+message GetVolumeResponse {
+  Volume volume = 1;
+}
+
+message ListVolumesRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string pool_id = 3;
+}
+
+message ListVolumesResponse {
+  repeated Volume volumes = 1;
+  int32 total = 2;
+}
+
+message DeleteVolumeRequest {
+  string id = 1;
+  bool force = 2;
+}
+
+message DeleteVolumeResponse {}
+
+message ResizeVolumeRequest {
+  string id = 1;
+  int64 size_bytes = 2;
+}
+
+message ResizeVolumeResponse {
+  Volume volume = 1;
+}
+
+message CloneVolumeRequest {
+  string id = 1;
+  string name = 2;
+}
+
+message CloneVolumeResponse {
+  Volume volume = 1;
+}
+
+message CreateSnapshotRequest {
+  string volume_id = 1;
+  string name = 2;
+}
+
+message CreateSnapshotResponse {
+  VolumeSnapshot snapshot = 1;
+}
+
+message DeleteSnapshotRequest {
+  string id = 1;
+}
+
+message DeleteSnapshotResponse {}
+
+message RestoreSnapshotRequest {
+  string snapshot_id = 1;
+}
+
+message RestoreSnapshotResponse {
+  Volume volume = 1;
+}
+
+service StorageService {
+  rpc CreatePool(CreatePoolRequest) returns (CreatePoolResponse);
+  rpc GetPool(GetPoolRequest) returns (GetPoolResponse);
+  rpc ListPools(ListPoolsRequest) returns (ListPoolsResponse);
+  rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeResponse);
+  rpc GetVolume(GetVolumeRequest) returns (GetVolumeResponse);
+  rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);
+  rpc DeleteVolume(DeleteVolumeRequest) returns (DeleteVolumeResponse);
+  rpc ResizeVolume(ResizeVolumeRequest) returns (ResizeVolumeResponse);
+  rpc CloneVolume(CloneVolumeRequest) returns (CloneVolumeResponse);
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+  rpc DeleteSnapshot(DeleteSnapshotRequest) returns (DeleteSnapshotResponse);
+  rpc RestoreSnapshot(RestoreSnapshotRequest) returns (RestoreSnapshotResponse);
+}
