@@ -1,0 +1,182 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.network;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/networkpb";
+
+import "google/protobuf/timestamp.proto";
+
+message PrivateNetwork {
+  string id = 1;
+  string name = 2;
+  string organization_id = 3;
+  string vpc_id = 4;
+  NetworkType type = 5;
+  string cidr = 6;
+  string ipv6_cidr = 7;
+  repeated Subnet subnets = 8;
+  bool internet_gateway = 9;
+  map<string, string> labels = 10;
+  google.protobuf.Timestamp created_at = 11;
+}
+
+enum NetworkType {
+  NETWORK_TYPE_UNSPECIFIED = 0;
+  NETWORK_TYPE_PRIVATE = 1;
+  NETWORK_TYPE_PUBLIC = 2;
+}
+
+message Subnet {
+  string id = 1;
+  string name = 2;
+  string network_id = 3;
+  string cidr = 4;
+  string ipv6_cidr = 5;
+  bool dhcp_enabled = 6;
+  string gateway_ip = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message FirewallRule {
+  string id = 1;
+  string name = 2;
+  string network_id = 3;
+  int32 priority = 4;
+  FirewallAction action = 5;
+  FirewallDirection direction = 6;
+  repeated string source_cidrs = 7;
+  repeated string destination_cidrs = 8;
+  repeated PortRange ports = 9;
+  string protocol = 10;
+  bool enabled = 11;
+  google.protobuf.Timestamp created_at = 12;
+}
+
+enum FirewallAction {
+  FIREWALL_ACTION_UNSPECIFIED = 0;
+  FIREWALL_ACTION_ALLOW = 1;
+  FIREWALL_ACTION_DENY = 2;
+}
+
+enum FirewallDirection {
+  FIREWALL_DIRECTION_UNSPECIFIED = 0;
+  FIREWALL_DIRECTION_INGRESS = 1;
+  FIREWALL_DIRECTION_EGRESS = 2;
+}
+
+message PortRange {
+  int32 min = 1;
+  int32 max = 2;
+}
+
+message FloatingIP {
+  string id = 1;
+  string ip_address = 2;
+  string network_id = 3;
+  string vm_id = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message CreateNetworkRequest {
+  string name = 1;
+  string organization_id = 2;
+  string cidr = 3;
+  string ipv6_cidr = 4;
+  bool internet_gateway = 5;
+}
+
+message CreateNetworkResponse {
+  PrivateNetwork network = 1;
+}
+
+message GetNetworkRequest {
+  string id = 1;
+}
+
+message GetNetworkResponse {
+  PrivateNetwork network = 1;
+}
+
+message ListNetworksRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string organization_id = 3;
+}
+
+message ListNetworksResponse {
+  repeated PrivateNetwork networks = 1;
+  int32 total = 2;
+}
+
+message DeleteNetworkRequest {
+  string id = 1;
+}
+
+message DeleteNetworkResponse {}
+
+message CreateSubnetRequest {
+  string network_id = 1;
+  string name = 2;
+  string cidr = 3;
+  bool dhcp_enabled = 4;
+}
+
+message CreateSubnetResponse {
+  Subnet subnet = 1;
+}
+
+message DeleteSubnetRequest {
+  string id = 1;
+}
+
+message DeleteSubnetResponse {}
+
+message CreateFirewallRuleRequest {
+  string network_id = 1;
+  string name = 2;
+  int32 priority = 3;
+  FirewallAction action = 4;
+  FirewallDirection direction = 5;
+  repeated string source_cidrs = 6;
+  repeated string destination_cidrs = 7;
+  repeated PortRange ports = 8;
+  string protocol = 9;
+}
+
+message CreateFirewallRuleResponse {
+  FirewallRule rule = 1;
+}
+
+message DeleteFirewallRuleRequest {
+  string id = 1;
+}
+
+message DeleteFirewallRuleResponse {}
+
+message AllocateFloatingIPRequest {
+  string network_id = 1;
+  string vm_id = 2;
+}
+
+message AllocateFloatingIPResponse {
+  FloatingIP floating_ip = 1;
+}
+
+message ReleaseFloatingIPRequest {
+  string id = 1;
+}
+
+message ReleaseFloatingIPResponse {}
+
+service NetworkService {
+  rpc CreateNetwork(CreateNetworkRequest) returns (CreateNetworkResponse);
+  rpc GetNetwork(GetNetworkRequest) returns (GetNetworkResponse);
+  rpc ListNetworks(ListNetworksRequest) returns (ListNetworksResponse);
+  rpc DeleteNetwork(DeleteNetworkRequest) returns (DeleteNetworkResponse);
+  rpc CreateSubnet(CreateSubnetRequest) returns (CreateSubnetResponse);
+  rpc DeleteSubnet(DeleteSubnetRequest) returns (DeleteSubnetResponse);
+  rpc CreateFirewallRule(CreateFirewallRuleRequest) returns (CreateFirewallRuleResponse);
+  rpc DeleteFirewallRule(DeleteFirewallRuleRequest) returns (DeleteFirewallRuleResponse);
+  rpc AllocateFloatingIP(AllocateFloatingIPRequest) returns (AllocateFloatingIPResponse);
+  rpc ReleaseFloatingIP(ReleaseFloatingIPRequest) returns (ReleaseFloatingIPResponse);
+}
