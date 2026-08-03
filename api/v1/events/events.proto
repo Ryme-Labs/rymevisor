@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.events;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/eventspb";
+
+import "google/protobuf/timestamp.proto";
+
+message Event {
+  string id = 1;
+  string type = 2;
+  string source = 3;
+  string aggregate_id = 4;
+  bytes payload = 5;
+  map<string, string> metadata = 6;
+  google.protobuf.Timestamp timestamp = 7;
+}
+
+// Node events
+message NodeRegistered {
+  string node_id = 1;
+  string name = 2;
+  string address = 3;
+}
+
+message NodeHeartbeat {
+  string node_id = 1;
+  int32 available_cpus = 2;
+  int64 available_memory_mb = 3;
+}
+
+message NodeStatusChanged {
+  string node_id = 1;
+  string old_status = 2;
+  string new_status = 3;
+}
+
+// VM events
+message VMCreated {
+  string vm_id = 1;
+  string name = 2;
+  string organization_id = 3;
+}
+
+message VMStarted {
+  string vm_id = 1;
+  string node_id = 2;
+}
+
+message VMStopped {
+  string vm_id = 1;
+  string node_id = 2;
+}
+
+message VMMigrated {
+  string vm_id = 1;
+  string source_node_id = 2;
+  string target_node_id = 3;
+}
+
+message VMDeleted {
+  string vm_id = 1;
+  string organization_id = 2;
+}
+
+message VMStatusChanged {
+  string vm_id = 1;
+  string old_status = 2;
+  string new_status = 3;
+}
+
+// Storage events
+message VolumeCreated {
+  string volume_id = 1;
+  string pool_id = 2;
+}
+
+message VolumeAttached {
+  string volume_id = 1;
+  string vm_id = 2;
+}
+
+message VolumeDetached {
+  string volume_id = 1;
+  string vm_id = 2;
+}
+
+message SnapshotCreated {
+  string snapshot_id = 1;
+  string volume_id = 2;
+}
+
+// Network events
+message NetworkCreated {
+  string network_id = 1;
+  string name = 2;
+}
+
+message FirewallRuleChanged {
+  string network_id = 1;
+  string rule_id = 2;
+  string action = 3;
+}
+
+// Auth events
+message UserLoggedIn {
+  string user_id = 1;
+  string ip_address = 2;
+}
+
+message UserCreated {
+  string user_id = 1;
+  string email = 2;
+}
+
+message APIKeyCreated {
+  string key_id = 1;
+  string organization_id = 2;
+}
+
+message APIKeyRevoked {
+  string key_id = 1;
+}
+
+// Backup events
+message BackupStarted {
+  string backup_id = 1;
+  string vm_id = 2;
+}
+
+message BackupCompleted {
+  string backup_id = 1;
+  string vm_id = 2;
+  int64 size_bytes = 3;
+}
+
+message BackupFailed {
+  string backup_id = 1;
+  string vm_id = 2;
+  string error = 3;
+}
