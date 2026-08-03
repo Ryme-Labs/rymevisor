@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.backup;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/backuppb";
+
+import "google/protobuf/timestamp.proto";
+
+message Backup {
+  string id = 1;
+  string name = 2;
+  string vm_id = 3;
+  string organization_id = 4;
+  BackupStatus status = 5;
+  int64 size_bytes = 6;
+  BackupType type = 7;
+  string storage_pool = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp completed_at = 10;
+}
+
+enum BackupStatus {
+  BACKUP_STATUS_UNSPECIFIED = 0;
+  BACKUP_STATUS_CREATING = 1;
+  BACKUP_STATUS_RUNNING = 2;
+  BACKUP_STATUS_COMPLETED = 3;
+  BACKUP_STATUS_FAILED = 4;
+  BACKUP_STATUS_DELETED = 5;
+}
+
+enum BackupType {
+  BACKUP_TYPE_UNSPECIFIED = 0;
+  BACKUP_TYPE_FULL = 1;
+  BACKUP_TYPE_INCREMENTAL = 2;
+}
+
+message CreateBackupRequest {
+  string vm_id = 1;
+  string name = 2;
+  BackupType type = 3;
+}
+
+message CreateBackupResponse {
+  Backup backup = 1;
+}
+
+message GetBackupRequest {
+  string id = 1;
+}
+
+message GetBackupResponse {
+  Backup backup = 1;
+}
+
+message ListBackupsRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string vm_id = 3;
+  string organization_id = 4;
+}
+
+message ListBackupsResponse {
+  repeated Backup backups = 1;
+  int32 total = 2;
+}
+
+message DeleteBackupRequest {
+  string id = 1;
+}
+
+message DeleteBackupResponse {}
+
+message RestoreBackupRequest {
+  string id = 1;
+  string vm_id = 2;
+}
+
+message RestoreBackupResponse {}
+
+service BackupService {
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+  rpc GetBackup(GetBackupRequest) returns (GetBackupResponse);
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+  rpc DeleteBackup(DeleteBackupRequest) returns (DeleteBackupResponse);
+  rpc RestoreBackup(RestoreBackupRequest) returns (RestoreBackupResponse);
+}
