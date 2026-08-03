@@ -1,0 +1,248 @@
+syntax = "proto3";
+
+package rymevalor.api.v1.vm;
+
+option go_package = "github.com/rymelabs/rymevisor/gen/go/rymevisor/api/v1/vmpb";
+
+import "google/protobuf/timestamp.proto";
+
+message VirtualMachine {
+  string id = 1;
+  string name = 2;
+  string node_id = 3;
+  string organization_id = 4;
+  string project_id = 5;
+  VMStatus status = 6;
+  VMConfig config = 7;
+  repeated Disk disks = 8;
+  repeated NetworkInterface network_interfaces = 9;
+  repeated string tags = 10;
+  map<string, string> metadata = 11;
+  map<string, string> labels = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+}
+
+enum VMStatus {
+  VM_STATUS_UNSPECIFIED = 0;
+  VM_STATUS_CREATING = 1;
+  VM_STATUS_RUNNING = 2;
+  VM_STATUS_STOPPED = 3;
+  VM_STATUS_PAUSED = 4;
+  VM_STATUS_REBOOTING = 5;
+  VM_STATUS_SHUTTING_DOWN = 6;
+  VM_STATUS_TERMINATED = 7;
+  VM_STATUS_ERROR = 8;
+  VM_STATUS_MIGRATING = 9;
+  VM_STATUS_SNAPSHOTTING = 10;
+}
+
+message VMConfig {
+  int32 vcpus = 1;
+  int64 memory_mb = 2;
+  string cpu_model = 3;
+  string machine_type = 4;
+  bool enable_secure_boot = 5;
+  bool enable_tpm = 6;
+  bool hugepages = 7;
+  string cloud_init = 8;
+  string ssh_key_id = 9;
+}
+
+message Disk {
+  string id = 1;
+  string name = 2;
+  int64 size_bytes = 3;
+  DiskType type = 4;
+  string storage_pool = 5;
+  bool boot = 6;
+  int32 order = 7;
+}
+
+enum DiskType {
+  DISK_TYPE_UNSPECIFIED = 0;
+  DISK_TYPE_QCOW2 = 1;
+  DISK_TYPE_RAW = 2;
+  DISK_TYPE_BLOCK = 3;
+}
+
+message NetworkInterface {
+  string id = 1;
+  string name = 2;
+  string network_id = 3;
+  string mac_address = 4;
+  repeated string ipv4_addresses = 5;
+  repeated string ipv6_addresses = 6;
+  bool is_primary = 7;
+}
+
+message CreateVMRequest {
+  string name = 1;
+  string node_id = 2;
+  VMConfig config = 3;
+  repeated CreateDiskRequest disks = 4;
+  repeated CreateNetworkInterfaceRequest network_interfaces = 5;
+  repeated string tags = 6;
+  map<string, string> metadata = 7;
+  map<string, string> labels = 8;
+}
+
+message CreateDiskRequest {
+  string name = 1;
+  int64 size_bytes = 2;
+  DiskType type = 3;
+  string storage_pool = 4;
+}
+
+message CreateNetworkInterfaceRequest {
+  string network_id = 1;
+  bool is_primary = 2;
+}
+
+message CreateVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message GetVMRequest {
+  string id = 1;
+}
+
+message GetVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message ListVMsRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string organization_id = 3;
+  string project_id = 4;
+  string node_id = 5;
+  VMStatus status = 6;
+  string search = 7;
+  string sort_by = 8;
+  string sort_order = 9;
+}
+
+message ListVMsResponse {
+  repeated VirtualMachine vms = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 per_page = 4;
+}
+
+message UpdateVMRequest {
+  string id = 1;
+  string name = 2;
+  map<string, string> metadata = 3;
+  map<string, string> labels = 4;
+  repeated string tags = 5;
+}
+
+message UpdateVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message DeleteVMRequest {
+  string id = 1;
+  bool force = 2;
+}
+
+message DeleteVMResponse {}
+
+message PowerOnVMRequest {
+  string id = 1;
+}
+
+message PowerOnVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message PowerOffVMRequest {
+  string id = 1;
+  bool force = 2;
+}
+
+message PowerOffVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message RebootVMRequest {
+  string id = 1;
+  bool force = 2;
+}
+
+message RebootVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message ResizeVMRequest {
+  string id = 1;
+  int32 vcpus = 2;
+  int64 memory_mb = 3;
+}
+
+message ResizeVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message SnapshotVMRequest {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message SnapshotVMResponse {
+  Snapshot snapshot = 1;
+}
+
+message Snapshot {
+  string id = 1;
+  string vm_id = 2;
+  string name = 3;
+  string description = 4;
+  int64 size_bytes = 5;
+  SnapshotStatus status = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+enum SnapshotStatus {
+  SNAPSHOT_STATUS_UNSPECIFIED = 0;
+  SNAPSHOT_STATUS_CREATING = 1;
+  SNAPSHOT_STATUS_READY = 2;
+  SNAPSHOT_STATUS_DELETED = 3;
+  SNAPSHOT_STATUS_ERROR = 4;
+}
+
+message CloneVMRequest {
+  string id = 1;
+  string name = 2;
+  string node_id = 3;
+  bool linked = 4;
+}
+
+message CloneVMResponse {
+  VirtualMachine vm = 1;
+}
+
+message RestoreSnapshotRequest {
+  string snapshot_id = 1;
+}
+
+message RestoreSnapshotResponse {
+  VirtualMachine vm = 1;
+}
+
+service VMService {
+  rpc CreateVM(CreateVMRequest) returns (CreateVMResponse);
+  rpc GetVM(GetVMRequest) returns (GetVMResponse);
+  rpc ListVMs(ListVMsRequest) returns (ListVMsResponse);
+  rpc UpdateVM(UpdateVMRequest) returns (UpdateVMResponse);
+  rpc DeleteVM(DeleteVMRequest) returns (DeleteVMResponse);
+  rpc PowerOnVM(PowerOnVMRequest) returns (PowerOnVMResponse);
+  rpc PowerOffVM(PowerOffVMRequest) returns (PowerOffVMResponse);
+  rpc RebootVM(RebootVMRequest) returns (RebootVMResponse);
+  rpc ResizeVM(ResizeVMRequest) returns (ResizeVMResponse);
+  rpc SnapshotVM(SnapshotVMRequest) returns (SnapshotVMResponse);
+  rpc CloneVM(CloneVMRequest) returns (CloneVMResponse);
+  rpc RestoreSnapshot(RestoreSnapshotRequest) returns (RestoreSnapshotResponse);
+}
