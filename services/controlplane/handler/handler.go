@@ -1,0 +1,385 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/rymelabs/rymevisor/services/controlplane"
+	"github.com/rymelabs/rymevisor/services/controlplane/domain"
+)
+
+type Handler struct {
+	svc       *controlplane.Service
+	nodeSvc   *controlplane.NodeServiceImpl
+}
+
+func NewHandler(svc *controlplane.Service) *Handler {
+	return &Handler{
+		svc:     svc,
+		nodeSvc: svc.NodeService(),
+	}
+}
+
+func (h *Handler) Routes() chi.Router {
+	r := chi.NewRouter()
+
+	r.Route("/vms", func(r chi.Router) {
+		r.Post("/", h.CreateVM)
+		r.Get("/", h.ListVMs)
+		r.Get("/{id}", h.GetVM)
+		r.Put("/{id}", h.UpdateVM)
+		r.Delete("/{id}", h.DeleteVM)
+		r.Post("/{id}/power-on", h.PowerOnVM)
+		r.Post("/{id}/power-off", h.PowerOffVM)
+		r.Post("/{id}/reboot", h.RebootVM)
+		r.Post("/{id}/resize", h.ResizeVM)
+		r.Post("/{id}/snapshot", h.SnapshotVM)
+		r.Post("/{id}/clone", h.CloneVM)
+		r.Post("/{id}/restore-snapshot", h.RestoreSnapshot)
+	})
+
+	r.Route("/nodes", func(r chi.Router) {
+		r.Post("/", h.RegisterNode)
+		r.Get("/", h.ListNodes)
+		r.Get("/{id}", h.GetNode)
+		r.Put("/{id}", h.UpdateNode)
+		r.Post("/{id}/drain", h.DrainNode)
+		r.Post("/{id}/heartbeat", h.Heartbeat)
+	})
+
+	return r
+}
+
+func (h *Handler) CreateVM(w http.ResponseWriter, r *http.Request) {
+	var req domain.CreateVMRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	vm, err := h.svc.CreateVM(r.Context(), &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, vm)
+}
+
+func (h *Handler) GetVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	vm, err := h.svc.GetVM(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if vm == nil {
+		writeError(w, http.StatusNotFound, "vm not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) ListVMs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+
+	filter := domain.VMFilter{
+		OrganizationID: q.Get("organization_id"),
+		ProjectID:      q.Get("project_id"),
+		NodeID:         q.Get("node_id"),
+		Status:         q.Get("status"),
+		Search:         q.Get("search"),
+		Page:           page,
+		PerPage:        perPage,
+	}
+
+	vms, total, err := h.svc.ListVMs(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": vms,
+		"total": total,
+	})
+}
+
+func (h *Handler) UpdateVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req domain.UpdateVMRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	vm, err := h.svc.UpdateVM(r.Context(), id, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) DeleteVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	force := r.URL.Query().Get("force") == "true"
+
+	if err := h.svc.DeleteVM(r.Context(), id, force); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) PowerOnVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	vm, err := h.svc.PowerOn(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) PowerOffVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	force := r.URL.Query().Get("force") == "true"
+
+	vm, err := h.svc.PowerOff(r.Context(), id, force)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) RebootVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	force := r.URL.Query().Get("force") == "true"
+
+	vm, err := h.svc.Reboot(r.Context(), id, force)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) ResizeVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		VCpus    int32 `json:"vcpus"`
+		MemoryMB int64 `json:"memory_mb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	vm, err := h.svc.Resize(r.Context(), id, req.VCpus, req.MemoryMB)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) SnapshotVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	snap, err := h.svc.Snapshot(r.Context(), id, req.Name, req.Description)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, snap)
+}
+
+func (h *Handler) CloneVM(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		Name   string `json:"name"`
+		NodeID string `json:"node_id"`
+		Linked bool   `json:"linked"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	vm, err := h.svc.Clone(r.Context(), id, req.Name, req.NodeID, req.Linked)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, vm)
+}
+
+func (h *Handler) RestoreSnapshot(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SnapshotID string `json:"snapshot_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	vm, err := h.svc.RestoreSnapshot(r.Context(), req.SnapshotID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, vm)
+}
+
+func (h *Handler) RegisterNode(w http.ResponseWriter, r *http.Request) {
+	var req domain.RegisterNodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	node, err := h.nodeSvc.Register(r.Context(), &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, node)
+}
+
+func (h *Handler) GetNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	node, err := h.nodeSvc.GetNode(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if node == nil {
+		writeError(w, http.StatusNotFound, "node not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (h *Handler) ListNodes(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+
+	filter := domain.NodeFilter{
+		Status:  q.Get("status"),
+		Search:  q.Get("search"),
+		Page:    page,
+		PerPage: perPage,
+	}
+
+	nodes, total, err := h.nodeSvc.ListNodes(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": nodes,
+		"total": total,
+	})
+}
+
+func (h *Handler) UpdateNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		Labels map[string]string `json:"labels"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	node, err := h.nodeSvc.UpdateNode(r.Context(), id, req.Labels)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, node)
+}
+
+func (h *Handler) DrainNode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		Timeout int32 `json:"timeout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Timeout = 60
+	}
+
+	if err := h.nodeSvc.Drain(r.Context(), id, req.Timeout); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req domain.NodeResources
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.nodeSvc.Heartbeat(r.Context(), id, req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
