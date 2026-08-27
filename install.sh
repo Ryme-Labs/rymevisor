@@ -161,12 +161,12 @@ install_deps_ubuntu() {
     bridge-utils \
     genisoimage \
     nftables \
-    postgresql postgresql-contrib \
-    redis-server \
+    docker.io docker-compose \
     gnupg2 lsb-release \
     software-properties-common \
     apt-transport-https ca-certificates
 
+  systemctl enable --now docker
   log_info "System dependencies installed"
 }
 
@@ -179,10 +179,10 @@ install_deps_debian() {
     bridge-utils \
     genisoimage \
     nftables \
-    postgresql postgresql-contrib \
-    redis-server \
+    docker.io docker-compose \
     gnupg2 lsb-release
 
+  systemctl enable --now docker
   log_info "System dependencies installed"
 }
 
@@ -194,9 +194,9 @@ install_deps_fedora() {
     bridge-utils \
     genisoimage \
     nftables \
-    postgresql-server postgresql \
-    redis
+    docker docker-compose
 
+  systemctl enable --now docker
   log_info "System dependencies installed"
 }
 
@@ -208,14 +208,13 @@ install_deps_rocky() {
     bridge-utils \
     genisoimage \
     nftables \
-    postgresql-server postgresql \
-    redis
+    docker docker-compose
 
+  systemctl enable --now docker
   log_info "System dependencies installed"
 }
 
 install_deps_arch() {
-  # Update first, then install packages one by one to handle prompts
   pacman -Syu --noconfirm 2>&1 | tail -3 || true
 
   local PACKAGES=(
@@ -224,30 +223,24 @@ install_deps_arch() {
     libvirt
     bridge-utils
     nftables
-    postgresql
-    redis
+    docker docker-compose
   )
 
   for pkg in "${PACKAGES[@]}"; do
     if ! pacman -Q "$pkg" &>/dev/null; then
       log_step "Installing $pkg..."
-      # Use --noconfirm and handle valkey conflict
       yes "" | pacman -S --noconfirm "$pkg" 2>&1 | tail -2 || true
     fi
   done
 
-  # Verify critical packages
+  systemctl enable --now docker
+
   local missing=""
-  for pkg in postgresql qemu-system-x86_64; do
+  for pkg in docker qemu-system-x86_64; do
     if ! pacman -Q "$pkg" &>/dev/null; then
       missing="$missing $pkg"
     fi
   done
-
-  # Check for redis or valkey
-  if ! pacman -Q redis &>/dev/null && ! pacman -Q valkey &>/dev/null; then
-    missing="$missing redis/valkey"
-  fi
 
   if [ -n "$missing" ]; then
     log_error "Failed to install:$missing"
@@ -324,119 +317,77 @@ setup_directories() {
 }
 
 # ============================================================
-# Database Setup
+# Infrastructure (Docker PostgreSQL + Redis)
 # ============================================================
 
-setup_database() {
-  log_step "Setting up PostgreSQL..."
-
-  # Check if postgresql package is installed
-  if ! pacman -Q postgresql &>/dev/null && ! dpkg -l postgresql &>/dev/null 2>&1; then
-    log_error "PostgreSQL is not installed"
-    log_error "Run: sudo pacman -S postgresql (Arch) or sudo apt install postgresql (Debian/Ubuntu)"
-    return 1
-  fi
-
-  # Detect PostgreSQL service name
-  local PG_SERVICE=""
-  for svc in postgresql postgresql16 postgresql15 postgresql14; do
-    if systemctl list-unit-files | grep -q "^${svc}\.service"; then
-      PG_SERVICE="$svc"
-      break
-    fi
-  done
-
-  # On Arch, try direct detection
-  if [ -z "$PG_SERVICE" ]; then
-    if [ -f /usr/lib/systemd/system/postgresql.service ]; then
-      PG_SERVICE="postgresql"
-    elif [ -d /var/lib/postgres ]; then
-      PG_SERVICE="postgresql"
-    fi
-  fi
-
-  if [ -z "$PG_SERVICE" ]; then
-    log_error "PostgreSQL service not found"
-    log_error "Try: sudo systemctl start postgresql"
-    return 1
-  fi
-
-  # Initialize PostgreSQL if data directory doesn't exist
-  local PG_DATA=""
-  if command -v sudo &>/dev/null; then
-    PG_DATA=$(sudo -u postgres psql -t -c "SHOW data_directory;" 2>/dev/null | tr -d ' ' || echo "")
-  fi
-
-  if [ -z "$PG_DATA" ] || [ ! -d "$PG_DATA" ]; then
-    log_step "Initializing PostgreSQL database..."
-
-    # Arch Linux
-    if [ -d /var/lib/postgres ] && [ ! -f /var/lib/postgres/PG_VERSION ]; then
-      sudo -u postgres initdb -D /var/lib/postgres/data 2>/dev/null || \
-      sudo -u postgres initdb -D /var/lib/postgres 2>/dev/null || true
-    fi
-
-    # Fedora/Rocky/RHEL
-    if [ ! -f /var/lib/pgsql/data/PG_VERSION ] && [ -d /var/lib/pgsql ]; then
-      postgresql-setup --initdb 2>/dev/null || \
-      sudo -u postgres initdb -D /var/lib/pgsql/data 2>/dev/null || true
-    fi
-
-    # Debian/Ubuntu
-    if command -v pg_createcluster &>/dev/null; then
-      pg_createcluster 16 main 2>/dev/null || true
-    fi
-  fi
-
-  # Start PostgreSQL
-  systemctl enable --now "$PG_SERVICE" 2>/dev/null || true
-  sleep 2
-
-  # Verify PostgreSQL is running
-  if ! sudo -u postgres psql -c "SELECT 1;" >/dev/null 2>&1; then
-    log_error "PostgreSQL failed to start"
-    log_warn "Check: sudo journalctl -u $PG_SERVICE -n 20"
-    return 1
-  fi
+start_infra() {
+  log_step "Starting infrastructure containers..."
 
   # Generate password if not set
   if [ -z "$DB_PASS" ]; then
     DB_PASS=$(generate_password)
   fi
 
-  # Create user and database
-  sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || \
-    sudo -u postgres psql -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || true
-  sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || true
-  sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;" 2>/dev/null || true
+  # Pull images
+  docker pull postgres:16-alpine >/dev/null 2>&1 || true
+  docker pull redis:7-alpine >/dev/null 2>&1 || true
 
-  # Configure password authentication (needed for Arch/Fedora)
-  local PG_HBA=""
-  if command -v sudo &>/dev/null; then
-    PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" 2>/dev/null | tr -d ' ' || echo "")
+  # PostgreSQL
+  if docker ps -a --format '{{.Names}}' | grep -q '^rymevisor-postgres$'; then
+    log_info "PostgreSQL container already exists, starting..."
+    docker start rymevalor-postgres >/dev/null 2>&1 || true
+  else
+    log_step "Starting PostgreSQL container..."
+    docker run -d \
+      --name rymevalor-postgres \
+      --restart unless-stopped \
+      -e POSTGRES_USER="$DB_USER" \
+      -e POSTGRES_PASSWORD="$DB_PASS" \
+      -e POSTGRES_DB="$DB_NAME" \
+      -p "${DB_PORT}:5432" \
+      -v rymevalor-pgdata:/var/lib/postgresql/data \
+      postgres:16-alpine >/dev/null
   fi
 
-  if [ -n "$PG_HBA" ] && [ -f "$PG_HBA" ]; then
-    # Only add if not already present
-    if ! grep -q "local.*all.*all.*md5" "$PG_HBA"; then
-      sed -i '/^local.*all.*all/i local   all             all                                     md5' "$PG_HBA" 2>/dev/null || true
-    fi
-    if ! grep -q "host.*all.*all.*127.0.0.1.*md5" "$PG_HBA"; then
-      sed -i '/^host.*all.*all.*127/i host    all             all             127.0.0.1/32            md5' "$PG_HBA" 2>/dev/null || true
-    fi
-    systemctl restart "$PG_SERVICE" 2>/dev/null || true
+  # Redis
+  if docker ps -a --format '{{.Names}}' | grep -q '^rymevisor-redis$'; then
+    log_info "Redis container already exists, starting..."
+    docker start rymevalor-redis >/dev/null 2>&1 || true
+  else
+    log_step "Starting Redis container..."
+    docker run -d \
+      --name rymevalor-redis \
+      --restart unless-stopped \
+      -p "${REDIS_PORT}:6379" \
+      -v rymevalor-redisdata:/data \
+      redis:7-alpine >/dev/null
+  fi
+
+  # Wait for PostgreSQL to be ready
+  log_step "Waiting for PostgreSQL to be ready..."
+  local retries=0
+  while ! docker exec rymevalor-postgres pg_isready -U "$DB_USER" >/dev/null 2>&1; do
     sleep 1
-  fi
+    retries=$((retries + 1))
+    if [ $retries -ge 30 ]; then
+      log_error "PostgreSQL failed to start within 30 seconds"
+      docker logs rymevalor-postgres --tail 20
+      return 1
+    fi
+  done
 
-  log_info "Database configured: $DB_NAME @ $DB_HOST:$DB_PORT"
+  log_info "Infrastructure containers running (PostgreSQL + Redis)"
 }
+
+# ============================================================
+# Database Migrations
+# ============================================================
 
 run_migrations() {
   log_step "Running database migrations..."
 
   local MIGRATION_DIR="/home/deyo/Rymelabs/rymevisor/migrations"
   if [ ! -d "$MIGRATION_DIR" ]; then
-    # Try to find migrations from installed location or git clone
     MIGRATION_DIR="/opt/rymevisor-source/migrations"
     if [ ! -d "$MIGRATION_DIR" ]; then
       log_warn "Migration files not found, skipping migrations"
@@ -447,7 +398,7 @@ run_migrations() {
   for migration_dir in "$MIGRATION_DIR"/*/; do
     for migration_file in "$migration_dir"*.up.sql; do
       if [ -f "$migration_file" ]; then
-        sudo -u postgres psql -d "$DB_NAME" -f "$migration_file" 2>/dev/null || true
+        docker exec -i rymevalor-postgres psql -U "$DB_USER" -d "$DB_NAME" < "$migration_file" 2>/dev/null || true
       fi
     done
   done
@@ -621,8 +572,8 @@ create_services() {
     cat > "/etc/systemd/system/rymevisor-${name}.service" << EOF
 [Unit]
 Description=RymeVisor ${name}
-After=network.target postgresql.service nats.service redis.service
-Wants=postgresql.service nats.service redis.service
+After=network.target docker.service nats.service
+Wants=docker.service nats.service
 
 [Service]
 Type=simple
@@ -858,8 +809,8 @@ do_install() {
     echo "  Domain: ${DOMAIN:-none (IP only)}"
     echo "  TLS: $ENABLE_TLS"
     echo "  Reverse proxy: $REVERSE_PROXY"
-    echo "  Database: PostgreSQL @ $DB_HOST:$DB_PORT"
-    echo "  Cache: Redis @ $REDIS_HOST:$REDIS_PORT"
+    echo "  Database: PostgreSQL (Docker) @ $DB_HOST:$DB_PORT"
+    echo "  Cache: Redis (Docker) @ $REDIS_HOST:$REDIS_PORT"
     echo "  Messaging: NATS @ $NATS_HOST:$NATS_PORT"
     echo ""
 
@@ -884,7 +835,7 @@ do_install() {
   setup_user
   setup_directories
   install_nats
-  setup_database
+  start_infra
   install_binaries
   generate_config
   run_migrations
@@ -901,10 +852,8 @@ do_install() {
 
   setup_firewall
 
-  # Start infrastructure services first
+  # Start NATS
   log_step "Starting infrastructure..."
-  # Redis might be called valkey on Arch
-  systemctl start redis 2>/dev/null || systemctl start valkey 2>/dev/null || true
   systemctl start nats 2>/dev/null || true
 
   # Start RymeVisor services
@@ -979,14 +928,7 @@ do_update() {
   local BACKUP_DIR="${RYMEVISOR_HOME}/backups/update-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"
 
-  # Read DB URL from config
-  local DB_URL
-  DB_URL=$(grep RYMEVISOR_DATABASE_URL "${RYMEVISOR_CONFIG}/config.env" 2>/dev/null | cut -d= -f2-)
-
-  if [ -n "$DB_URL" ]; then
-    PGPASSWORD="${DB_PASS:-}" pg_dump -U "${DB_USER}" "${DB_NAME}" > "${BACKUP_DIR}/database.sql" 2>/dev/null || \
-    sudo -u postgres pg_dump "${DB_NAME}" > "${BACKUP_DIR}/database.sql" 2>/dev/null || true
-  fi
+  docker exec rymevalor-postgres pg_dump -U "$DB_USER" "$DB_NAME" > "${BACKUP_DIR}/database.sql" 2>/dev/null || true
   cp -r "${RYMEVISOR_CONFIG}" "${BACKUP_DIR}/config" 2>/dev/null || true
   log_info "Backup created: $BACKUP_DIR"
 
@@ -996,7 +938,6 @@ do_update() {
 
   # Restart
   log_step "Starting services..."
-  systemctl start redis 2>/dev/null || systemctl start valkey 2>/dev/null || true
   systemctl start nats 2>/dev/null || true
 
   for svc in "${SVCS[@]}"; do
@@ -1054,10 +995,13 @@ do_uninstall() {
   # Remove config
   rm -rf "${RYMEVISOR_CONFIG}"
 
+  # Stop and remove Docker containers
+  docker stop rymevalor-postgres rymevalor-redis 2>/dev/null || true
+  docker rm rymevalor-postgres rymevalor-redis 2>/dev/null || true
+
   # Remove data if requested
   if [ "${REMOVE_DATA:-false}" = true ]; then
-    sudo -u postgres dropdb "$DB_NAME" 2>/dev/null || true
-    sudo -u postgres dropuser "$DB_USER" 2>/dev/null || true
+    docker volume rm rymevalor-pgdata rymevalor-redisdata 2>/dev/null || true
     rm -rf "${RYMEVISOR_HOME}"
     rm -rf /var/lib/nats
   fi
@@ -1079,7 +1023,7 @@ do_uninstall() {
   echo ""
   log_info "RymeVisor uninstalled"
   if [ "${REMOVE_DATA:-false}" != true ]; then
-    log_warn "Data preserved at ${RYMEVISOR_HOME}"
+    log_warn "Docker volumes preserved. Remove with: docker volume rm rymevalor-pgdata rymevalor-redisdata"
   fi
 }
 
@@ -1094,17 +1038,30 @@ do_status() {
 
   # Infrastructure
   echo "Infrastructure:"
-  for svc in postgresql redis valkey nats; do
-    local status
-    status=$(systemctl is-active "$svc" 2>/dev/null || echo "not found")
-    if [ "$status" = "active" ]; then
-      echo -e "  ${GREEN}●${NC} ${svc}: ${GREEN}running${NC}"
-    elif [ "$status" = "inactive" ]; then
-      echo -e "  ${YELLOW}●${NC} ${svc}: ${YELLOW}stopped${NC}"
+
+  # Docker containers
+  for container in rymevalor-postgres rymevalor-redis; do
+    local state
+    state=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null || echo "not found")
+    if [ "$state" = "running" ]; then
+      echo -e "  ${GREEN}●${NC} ${container}: ${GREEN}running${NC}"
+    elif [ "$state" = "exited" ]; then
+      echo -e "  ${YELLOW}●${NC} ${container}: ${YELLOW}stopped${NC}"
     else
-      echo -e "  ${RED}●${NC} ${svc}: ${RED}${status}${NC}"
+      echo -e "  ${RED}●${NC} ${container}: ${RED}${state}${NC}"
     fi
   done
+
+  # NATS
+  local nats_status
+  nats_status=$(systemctl is-active nats 2>/dev/null || echo "not found")
+  if [ "$nats_status" = "active" ]; then
+    echo -e "  ${GREEN}●${NC} nats: ${GREEN}running${NC}"
+  elif [ "$nats_status" = "inactive" ]; then
+    echo -e "  ${YELLOW}●${NC} nats: ${YELLOW}stopped${NC}"
+  else
+    echo -e "  ${RED}●${NC} nats: ${RED}${nats_status}${NC}"
+  fi
 
   echo ""
   echo "RymeVisor Services:"
