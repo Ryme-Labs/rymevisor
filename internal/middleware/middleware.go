@@ -16,10 +16,11 @@ import (
 type contextKey string
 
 const (
-	UserIDKey     contextKey = "user_id"
-	OrgIDKey      contextKey = "org_id"
-	APIKeyIDKey   contextKey = "api_key_id"
-	PermissionKey contextKey = "permission"
+	requestIDKey   contextKey = "request_id"
+	UserIDKey      contextKey = "user_id"
+	OrgIDKey       contextKey = "org_id"
+	APIKeyIDKey    contextKey = "api_key_id"
+	PermissionKey  contextKey = "permission"
 )
 
 func RequestID(next http.Handler) http.Handler {
@@ -85,7 +86,7 @@ func RequestTracing(next http.Handler) http.Handler {
 				requestID = hex.EncodeToString(b)
 			}
 		}
-		ctx = context.WithValue(ctx, "request_id", requestID)
+		ctx = context.WithValue(ctx, requestIDKey, requestID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

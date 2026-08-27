@@ -316,7 +316,7 @@ func (a *Agent) handleCommand(ctx context.Context, msg jetstream.Msg) {
 	var cmd VMCommand
 	if err := json.Unmarshal(msg.Data(), &cmd); err != nil {
 		a.logger.Error("failed to unmarshal command", zap.Error(err))
-		msg.Nak()
+		_ = msg.Nak()
 		return
 	}
 
@@ -363,9 +363,9 @@ func (a *Agent) handleCommand(ctx context.Context, msg jetstream.Msg) {
 	_, _ = a.js.Publish(ctx, resultSubject, resultData)
 
 	if err != nil {
-		msg.Nak()
+		_ = msg.Nak()
 	} else {
-		msg.Ack()
+		_ = msg.Ack()
 	}
 }
 
