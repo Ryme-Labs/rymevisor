@@ -341,6 +341,7 @@ install_binaries() {
   fi
 
   local BASE_URL="https://github.com/Ryme-Labs/rymevisor/releases/download/${VERSION}"
+  local ANY_DOWNLOADED=false
 
   local SERVICES=("control-plane" "api-gateway" "auth-service" "scheduler" "networking-engine" "storage-manager" "node-agent")
 
@@ -351,11 +352,41 @@ install_binaries() {
 
     if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
       chmod +x "$dest"
-      log_info "Installed: rymevisor-${binary_name}"
+      ANY_DOWNLOADED=true
+      log_info "Installed: rymevalor-${binary_name}"
     else
-      log_warn "Could not download ${binary_name} (may not be released yet)"
+      log_warn "Could not download ${binary_name} from releases"
     fi
   done
+
+  # If no binaries were downloaded, build from source
+  if [ "$ANY_DOWNLOADED" = false ]; then
+    log_warn "No release binaries found. Building from source..."
+    local SRC_DIR="/opt/rymevisor-source"
+
+    if ! command -v go &>/dev/null; then
+      log_step "Installing Go..."
+      local GO_VERSION="1.23.6"
+      curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar xz -C /usr/local
+      export PATH=$PATH:/usr/local/go/bin
+    fi
+
+    git clone --depth 1 https://github.com/Ryme-Labs/rymevisor.git "$SRC_DIR" 2>/dev/null || true
+
+    if [ -f "${SRC_DIR}/go.mod" ]; then
+      (cd "$SRC_DIR" && go mod tidy 2>/dev/null)
+      for service in "${SERVICES[@]}"; do
+        local dest="${RYMEVISOR_BIN}/rymevisor-${service}"
+        if [ -f "${SRC_DIR}/cmd/${service}/main.go" ]; then
+          log_step "Building ${service} from source..."
+          (cd "$SRC_DIR" && CGO_ENABLED=0 go build -o "$dest" "./cmd/${service}" 2>/dev/null) && \
+            log_info "Built from source: rymevalor-${service}" || \
+            log_warn "Failed to build ${service}"
+        fi
+      done
+      rm -rf "$SRC_DIR"
+    fi
+  fi
 
   # Create symlinks for convenience
   ln -sf "${RYMEVISOR_BIN}/rymevisor-api-gateway" "${RYMEVISOR_BIN}/rymevisor" 2>/dev/null || true

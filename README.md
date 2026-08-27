@@ -25,11 +25,23 @@ It was originally developed internally at Ryme Labs to manage our fleet of serve
 
 ## Quick Start
 
-```bash
-# Install on Ubuntu/Debian
-curl -fsSL https://raw.githubusercontent.com/Ryme-Labs/rymevisor/main/install.sh | sudo bash
+One command to install everything:
 
-# Or clone and install
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ryme-Labs/rymevisor/main/install.sh | sudo bash
+```
+
+This will:
+1. Detect your Linux distribution
+2. Install QEMU/KVM, PostgreSQL, Redis, NATS, and all dependencies
+3. Download the latest RymeVisor binaries from GitHub Releases
+4. Run database migrations
+5. Set up systemd services
+6. Optionally configure Nginx/Caddy reverse proxy with TLS
+
+Or install from source:
+
+```bash
 git clone https://github.com/Ryme-Labs/rymevisor.git
 cd rymevalor
 sudo bash install.sh
