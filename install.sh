@@ -429,7 +429,6 @@ run_migrations() {
 install_binaries() {
   log_step "Installing RymeVisor binaries..."
 
-  local VERSION="$RYMEVISOR_VERSION"
   local ARCH
   ARCH=$(uname -m)
   case "$ARCH" in
@@ -437,32 +436,54 @@ install_binaries() {
     aarch64) ARCH="arm64" ;;
   esac
 
-  if [ "$VERSION" = "latest" ]; then
-    VERSION=$(curl -fsSL https://api.github.com/repos/Ryme-Labs/rymevisor/releases/latest | jq -r '.tag_name' 2>/dev/null || echo "v0.1.0")
+  local SERVICES=("control-plane" "api-gateway" "auth-service" "scheduler" "networking-engine" "storage-manager" "node-agent")
+  local ANY_INSTALLED=false
+
+  # 1. Try building from local source first
+  local LOCAL_SRC=""
+  if [ -f "./go.mod" ] && [ -d "./cmd" ]; then
+    LOCAL_SRC="."
+  elif [ -f "$(dirname "$0")/go.mod" ]; then
+    LOCAL_SRC="$(dirname "$0")"
   fi
 
-  local BASE_URL="https://github.com/Ryme-Labs/rymevisor/releases/download/${VERSION}"
-  local ANY_DOWNLOADED=false
+  if [ -n "$LOCAL_SRC" ] && command -v go &>/dev/null; then
+    log_step "Building from local source..."
+    for service in "${SERVICES[@]}"; do
+      local dest="${RYMEVISOR_BIN}/rymevisor-${service}"
+      if [ -f "${LOCAL_SRC}/cmd/${service}/main.go" ]; then
+        (cd "$LOCAL_SRC" && CGO_ENABLED=0 go build -o "$dest" "./cmd/${service}" 2>/dev/null) && \
+          log_info "Built: rymevalor-${service}" || \
+          log_warn "Failed to build ${service}"
+        ANY_INSTALLED=true
+      fi
+    done
+  fi
 
-  local SERVICES=("control-plane" "api-gateway" "auth-service" "scheduler" "networking-engine" "storage-manager" "node-agent")
-
-  for service in "${SERVICES[@]}"; do
-    local binary_name="${service}"
-    local url="${BASE_URL}/${binary_name}-linux-${ARCH}"
-    local dest="${RYMEVISOR_BIN}/rymevisor-${binary_name}"
-
-    if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
-      chmod +x "$dest"
-      ANY_DOWNLOADED=true
-      log_info "Installed: rymevalor-${binary_name}"
-    else
-      log_warn "Could not download ${binary_name} from releases"
+  # 2. Try downloading from GitHub releases
+  if [ "$ANY_INSTALLED" = false ]; then
+    local VERSION="$RYMEVISOR_VERSION"
+    if [ "$VERSION" = "latest" ]; then
+      VERSION=$(curl -fsSL https://api.github.com/repos/Ryme-Labs/rymevisor/releases/latest | jq -r '.tag_name' 2>/dev/null || echo "")
     fi
-  done
 
-  # If no binaries were downloaded, build from source
-  if [ "$ANY_DOWNLOADED" = false ]; then
-    log_warn "No release binaries found. Building from source..."
+    if [ -n "$VERSION" ]; then
+      local BASE_URL="https://github.com/Ryme-Labs/rymevisor/releases/download/${VERSION}"
+      for service in "${SERVICES[@]}"; do
+        local url="${BASE_URL}/${service}-linux-${ARCH}"
+        local dest="${RYMEVISOR_BIN}/rymevisor-${service}"
+        if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
+          chmod +x "$dest"
+          ANY_INSTALLED=true
+          log_info "Downloaded: rymevalor-${service}"
+        fi
+      done
+    fi
+  fi
+
+  # 3. Fall back to cloning and building
+  if [ "$ANY_INSTALLED" = false ]; then
+    log_warn "Building from GitHub source..."
     local SRC_DIR="/opt/rymevisor-source"
 
     if ! command -v go &>/dev/null; then
@@ -472,26 +493,27 @@ install_binaries() {
       export PATH=$PATH:/usr/local/go/bin
     fi
 
-    if [ ! -d "$SRC_DIR" ]; then
-      git clone --depth 1 https://github.com/Ryme-Labs/rymevisor.git "$SRC_DIR" 2>/dev/null || true
-    fi
+    git clone --depth 1 https://github.com/Ryme-Labs/rymevisor.git "$SRC_DIR" 2>/dev/null || true
 
     if [ -f "${SRC_DIR}/go.mod" ]; then
       (cd "$SRC_DIR" && go mod tidy 2>/dev/null)
       for service in "${SERVICES[@]}"; do
         local dest="${RYMEVISOR_BIN}/rymevisor-${service}"
         if [ -f "${SRC_DIR}/cmd/${service}/main.go" ]; then
-          log_step "Building ${service} from source..."
           (cd "$SRC_DIR" && CGO_ENABLED=0 go build -o "$dest" "./cmd/${service}" 2>/dev/null) && \
-            log_info "Built from source: rymevalor-${service}" || \
+            log_info "Built: rymevalor-${service}" || \
             log_warn "Failed to build ${service}"
         fi
       done
     fi
   fi
 
-  # Create symlinks for convenience
   ln -sf "${RYMEVISOR_BIN}/rymevisor-api-gateway" "${RYMEVISOR_BIN}/rymevisor" 2>/dev/null || true
+
+  if [ "$ANY_INSTALLED" = false ]; then
+    log_error "No binaries installed"
+    return 1
+  fi
 }
 
 # ============================================================
