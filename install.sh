@@ -221,7 +221,6 @@ install_deps_arch() {
     curl wget git unzip jq
     qemu-system-x86
     libvirt
-    bridge
     nftables
     docker docker-compose
   )
@@ -328,9 +327,23 @@ start_infra() {
     DB_PASS=$(generate_password)
   fi
 
-  # Stop and remove any existing containers (clean slate)
+  # Stop and remove any existing containers
   docker stop rymevalor-postgres rymevalor-redis 2>/dev/null || true
   docker rm rymevalor-postgres rymevalor-redis 2>/dev/null || true
+
+  # Find available ports
+  local PG_PORT=$DB_PORT
+  local RED_PORT=$REDIS_PORT
+
+  if ss -tln | grep -q ":${PG_PORT} "; then
+    log_warn "Port $PG_PORT in use, trying 5433..."
+    PG_PORT=5433
+  fi
+
+  if ss -tln | grep -q ":${RED_PORT} "; then
+    log_warn "Port $RED_PORT in use, trying 6380..."
+    RED_PORT=6380
+  fi
 
   # Pull images
   log_step "Pulling Docker images..."
@@ -338,19 +351,19 @@ start_infra() {
   docker pull redis:7-alpine 2>&1 | tail -1
 
   # Start PostgreSQL
-  log_step "Starting PostgreSQL container..."
+  log_step "Starting PostgreSQL on port $PG_PORT..."
   docker run -d \
     --name rymevalor-postgres \
     --restart unless-stopped \
     -e POSTGRES_USER="$DB_USER" \
     -e POSTGRES_PASSWORD="$DB_PASS" \
     -e POSTGRES_DB="$DB_NAME" \
-    -p "${DB_PORT}:5432" \
+    -p "${PG_PORT}:5432" \
     -v rymevalor-pgdata:/var/lib/postgresql/data \
     postgres:16-alpine >/dev/null
 
   # Start Redis
-  log_step "Starting Redis container..."
+  log_step "Starting Redis on port $RED_PORT..."
   local REDIS_ARGS=""
   if [ -n "$REDIS_PASS" ]; then
     REDIS_ARGS="--requirepass $REDIS_PASS"
@@ -358,9 +371,13 @@ start_infra() {
   docker run -d \
     --name rymevalor-redis \
     --restart unless-stopped \
-    -p "${REDIS_PORT}:6379" \
+    -p "${RED_PORT}:6379" \
     -v rymevalor-redisdata:/data \
     redis:7-alpine redis-server $REDIS_ARGS >/dev/null
+
+  # Update ports for config
+  DB_PORT=$PG_PORT
+  REDIS_PORT=$RED_PORT
 
   # Wait for PostgreSQL to be ready
   log_step "Waiting for PostgreSQL to be ready..."
