@@ -24,7 +24,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *domain.VirtualMachine) er
 	if err != nil {
 		return fmt.Errorf("vm_repo: begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	tagsJSON, err := json.Marshal(vm.Tags)
 	if err != nil {

@@ -43,7 +43,7 @@ func (h *Handler) Liveness() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(Check{Status: StatusUp})
+		_ = json.NewEncoder(w).Encode(Check{Status: StatusUp})
 	})
 }
 
@@ -74,6 +74,6 @@ func (h *Handler) Readiness() http.Handler {
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
-		json.NewEncoder(w).Encode(Check{Status: overall, Checks: checks})
+		_ = json.NewEncoder(w).Encode(Check{Status: overall, Checks: checks})
 	})
 }

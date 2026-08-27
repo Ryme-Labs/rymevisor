@@ -263,7 +263,9 @@ func (m *Manager) sendQMPCommandWithReturn(socketPath string, cmd map[string]int
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set deadline: %w", err)
+	}
 
 	decoder := json.NewDecoder(conn)
 	encoder := json.NewEncoder(conn)

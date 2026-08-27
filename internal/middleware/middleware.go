@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -78,8 +79,11 @@ func RequestTracing(next http.Handler) http.Handler {
 		requestID := middleware.GetReqID(ctx)
 		if requestID == "" {
 			b := make([]byte, 8)
-			rand.Read(b)
-			requestID = hex.EncodeToString(b)
+			if _, err := rand.Read(b); err != nil {
+				requestID = fmt.Sprintf("%d", time.Now().UnixNano())
+			} else {
+				requestID = hex.EncodeToString(b)
+			}
 		}
 		ctx = context.WithValue(ctx, "request_id", requestID)
 		next.ServeHTTP(w, r.WithContext(ctx))

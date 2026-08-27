@@ -28,7 +28,7 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
@@ -147,7 +147,7 @@ func (g *Gateway) proxy(targetURL string) http.HandlerFunc {
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadGateway)
-				w.Write([]byte(`{"error":"service unavailable"}`))
+				_, _ = w.Write([]byte(`{"error":"service unavailable"}`))
 			},
 		}
 		proxy.ServeHTTP(w, r)
