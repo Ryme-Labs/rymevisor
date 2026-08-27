@@ -1,0 +1,32 @@
+run:
+  timeout: 5m
+  skip-dirs:
+    - gen
+    - vendor
+    - tools
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+    - ineffassign
+    - unused
+    - gosimple
+
+linters-settings:
+  errcheck:
+    check-blank: false
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: cmd/
+      linters:
+        - errcheck
+
+output:
+  formats:
+    - format: colored-line-number
