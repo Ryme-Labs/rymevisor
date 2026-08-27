@@ -165,8 +165,9 @@ install_deps_ubuntu() {
     redis-server \
     gnupg2 lsb-release \
     software-properties-common \
-    apt-transport-https ca-certificates \
-    > /dev/null 2>&1
+    apt-transport-https ca-certificates
+
+  log_info "System dependencies installed"
 }
 
 install_deps_debian() {
@@ -180,8 +181,9 @@ install_deps_debian() {
     nftables \
     postgresql postgresql-contrib \
     redis-server \
-    gnupg2 lsb-release \
-    > /dev/null 2>&1
+    gnupg2 lsb-release
+
+  log_info "System dependencies installed"
 }
 
 install_deps_fedora() {
@@ -193,8 +195,9 @@ install_deps_fedora() {
     genisoimage \
     nftables \
     postgresql-server postgresql \
-    redis \
-    > /dev/null 2>&1
+    redis
+
+  log_info "System dependencies installed"
 }
 
 install_deps_rocky() {
@@ -206,8 +209,9 @@ install_deps_rocky() {
     genisoimage \
     nftables \
     postgresql-server postgresql \
-    redis \
-    > /dev/null 2>&1
+    redis
+
+  log_info "System dependencies installed"
 }
 
 install_deps_arch() {
@@ -218,8 +222,23 @@ install_deps_arch() {
     bridge-utils \
     nftables \
     postgresql \
-    redis \
-    > /dev/null 2>&1 || true
+    redis 2>&1 | tail -5
+
+  # Verify critical packages
+  local missing=""
+  for pkg in postgresql redis qemu-system-x86_64; do
+    if ! pacman -Q "$pkg" &>/dev/null; then
+      missing="$missing $pkg"
+    fi
+  done
+
+  if [ -n "$missing" ]; then
+    log_error "Failed to install:$missing"
+    log_error "Run manually: sudo pacman -S$missing"
+    return 1
+  fi
+
+  log_info "System dependencies installed"
 }
 
 install_nats() {
@@ -294,6 +313,13 @@ setup_directories() {
 setup_database() {
   log_step "Setting up PostgreSQL..."
 
+  # Check if postgresql package is installed
+  if ! pacman -Q postgresql &>/dev/null && ! dpkg -l postgresql &>/dev/null 2>&1; then
+    log_error "PostgreSQL is not installed"
+    log_error "Run: sudo pacman -S postgresql (Arch) or sudo apt install postgresql (Debian/Ubuntu)"
+    return 1
+  fi
+
   # Detect PostgreSQL service name
   local PG_SERVICE=""
   for svc in postgresql postgresql16 postgresql15 postgresql14; do
@@ -303,19 +329,46 @@ setup_database() {
     fi
   done
 
+  # On Arch, try direct detection
+  if [ -z "$PG_SERVICE" ]; then
+    if [ -f /usr/lib/systemd/system/postgresql.service ]; then
+      PG_SERVICE="postgresql"
+    elif [ -d /var/lib/postgres ]; then
+      PG_SERVICE="postgresql"
+    fi
+  fi
+
   if [ -z "$PG_SERVICE" ]; then
     log_error "PostgreSQL service not found"
+    log_error "Try: sudo systemctl start postgresql"
     return 1
   fi
 
-  # Initialize PostgreSQL if needed (Arch/Fedora/Rocky)
-  local PG_DATA=$(sudo -u postgres psql -t -c "SHOW data_directory;" 2>/dev/null | tr -d ' ' || echo "")
+  # Initialize PostgreSQL if data directory doesn't exist
+  local PG_DATA=""
+  if command -v sudo &>/dev/null; then
+    PG_DATA=$(sudo -u postgres psql -t -c "SHOW data_directory;" 2>/dev/null | tr -d ' ' || echo "")
+  fi
+
   if [ -z "$PG_DATA" ] || [ ! -d "$PG_DATA" ]; then
-    log_step "Initializing PostgreSQL..."
-    # Try initdb
-    sudo -u postgres initdb -D /var/lib/postgres/data 2>/dev/null || \
-    sudo -u postgres initdb -D /var/lib/pgsql/data 2>/dev/null || \
-    postgresql-setup --initdb 2>/dev/null || true
+    log_step "Initializing PostgreSQL database..."
+
+    # Arch Linux
+    if [ -d /var/lib/postgres ] && [ ! -f /var/lib/postgres/PG_VERSION ]; then
+      sudo -u postgres initdb -D /var/lib/postgres/data 2>/dev/null || \
+      sudo -u postgres initdb -D /var/lib/postgres 2>/dev/null || true
+    fi
+
+    # Fedora/Rocky/RHEL
+    if [ ! -f /var/lib/pgsql/data/PG_VERSION ] && [ -d /var/lib/pgsql ]; then
+      postgresql-setup --initdb 2>/dev/null || \
+      sudo -u postgres initdb -D /var/lib/pgsql/data 2>/dev/null || true
+    fi
+
+    # Debian/Ubuntu
+    if command -v pg_createcluster &>/dev/null; then
+      pg_createcluster 16 main 2>/dev/null || true
+    fi
   fi
 
   # Start PostgreSQL
@@ -325,7 +378,7 @@ setup_database() {
   # Verify PostgreSQL is running
   if ! sudo -u postgres psql -c "SELECT 1;" >/dev/null 2>&1; then
     log_error "PostgreSQL failed to start"
-    log_warn "Try running: sudo -u postgres pg_ctl -D /var/lib/postgres/data start"
+    log_warn "Check: sudo journalctl -u $PG_SERVICE -n 20"
     return 1
   fi
 
@@ -340,12 +393,20 @@ setup_database() {
   sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || true
   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;" 2>/dev/null || true
 
-  # Allow password auth
-  local PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" | tr -d ' ')
-  if [ -f "$PG_HBA" ]; then
-    # Add md5 auth for local connections before the default ident/auth
-    sed -i '/^local.*all.*all/i local   all             all                                     md5' "$PG_HBA" 2>/dev/null || true
-    sed -i '/^host.*all.*all.*127/i host    all             all             127.0.0.1/32            md5' "$PG_HBA" 2>/dev/null || true
+  # Configure password authentication (needed for Arch/Fedora)
+  local PG_HBA=""
+  if command -v sudo &>/dev/null; then
+    PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" 2>/dev/null | tr -d ' ' || echo "")
+  fi
+
+  if [ -n "$PG_HBA" ] && [ -f "$PG_HBA" ]; then
+    # Only add if not already present
+    if ! grep -q "local.*all.*all.*md5" "$PG_HBA"; then
+      sed -i '/^local.*all.*all/i local   all             all                                     md5' "$PG_HBA" 2>/dev/null || true
+    fi
+    if ! grep -q "host.*all.*all.*127.0.0.1.*md5" "$PG_HBA"; then
+      sed -i '/^host.*all.*all.*127/i host    all             all             127.0.0.1/32            md5' "$PG_HBA" 2>/dev/null || true
+    fi
     systemctl restart "$PG_SERVICE" 2>/dev/null || true
     sleep 1
   fi
