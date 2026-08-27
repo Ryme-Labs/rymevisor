@@ -116,39 +116,40 @@ jobs:
       - name: Determine version
         id: version
         run: |
+          # Manual override takes priority
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
             echo "is_release=true" >> $GITHUB_OUTPUT
-          elif [ -f VERSION ]; then
-            VERSION=$(cat VERSION | tr -d '[:space:]')
-            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "## Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+
+          # Get latest tag
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            # No tags yet, start at v0.1.0
+            VERSION="v0.1.0"
           else
-            VERSION="v0.1.0-$(date +%Y%m%d)-${GITHUB_SHA::7}"
+            # Auto-bump patch from latest tag
+            CURRENT=$(echo "$LATEST_TAG" | sed 's/^v//')
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            PATCH=$((PATCH + 1))
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          # Check if this exact tag already exists
+          if git rev-parse "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "Tag ${VERSION} already exists, skipping release"
             echo "is_release=false" >> $GITHUB_OUTPUT
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "## Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
-
-      - name: Auto bump version
-        if: github.event.inputs.bump != ''
-        run: |
-          BUMP="${{ github.event.inputs.bump }}"
-          if [ -f VERSION ]; then
-            CURRENT=$(cat VERSION | tr -d '[:space:]' | sed 's/^v//')
+            echo "version=${VERSION}-skip" >> $GITHUB_OUTPUT
           else
-            CURRENT="0.1.0"
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
           fi
 
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH + 1)) ;;
-          esac
-
-          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          echo "$NEW_VERSION" > VERSION
-          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "## Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
 
   release-build:
     name: Build Release ${{ matrix.goos }}/${{ matrix.goarch }}
