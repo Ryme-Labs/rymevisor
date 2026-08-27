@@ -745,10 +745,7 @@ EOF
 
 do_install() {
   echo ""
-  echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-  echo -e "${CYAN}║     RymeVisor Installer v${RYMEVISOR_VERSION}        ║${NC}"
-  echo -e "${CYAN}║  Originally built for Ryme Labs      ║${NC}"
-  echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+  log_info "RymeVisor Installer v${RYMEVISOR_VERSION}"
   echo ""
 
   check_root
@@ -852,9 +849,7 @@ do_install() {
   sleep 3
 
   echo ""
-  echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
-  echo -e "${GREEN}║      Installation Complete!          ║${NC}"
-  echo -e "${GREEN}╚══════════════════════════════════════╝${NC}"
+  log_info "Installation Complete!"
   echo ""
   log_info "Dashboard: http://${DOMAIN:-localhost}"
   log_info "API:       http://${DOMAIN:-localhost}/api/v1"
