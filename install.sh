@@ -322,14 +322,9 @@ setup_directories() {
 start_infra() {
   log_step "Starting infrastructure containers..."
 
-  # Generate password if not set
-  if [ -z "$DB_PASS" ]; then
-    DB_PASS=$(generate_password)
-  fi
-
-  # Stop and remove any existing containers
-  docker stop rymevalor-postgres rymevalor-redis 2>/dev/null || true
-  docker rm rymevalor-postgres rymevalor-redis 2>/dev/null || true
+  # Check if containers already exist
+  local PG_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevisor-postgres$' || true)
+  local RED_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevisor-redis$' || true)
 
   # Find available ports
   local PG_PORT=$DB_PORT
@@ -345,35 +340,48 @@ start_infra() {
     RED_PORT=6380
   fi
 
-  # Pull images
-  log_step "Pulling Docker images..."
-  docker pull postgres:16-alpine 2>&1 | tail -1
-  docker pull redis:7-alpine 2>&1 | tail -1
-
-  # Start PostgreSQL
-  log_step "Starting PostgreSQL on port $PG_PORT..."
-  docker run -d \
-    --name rymevalor-postgres \
-    --restart unless-stopped \
-    -e POSTGRES_USER="$DB_USER" \
-    -e POSTGRES_PASSWORD="$DB_PASS" \
-    -e POSTGRES_DB="$DB_NAME" \
-    -p "${PG_PORT}:5432" \
-    -v rymevalor-pgdata:/var/lib/postgresql/data \
-    postgres:16-alpine >/dev/null
-
-  # Start Redis
-  log_step "Starting Redis on port $RED_PORT..."
-  local REDIS_ARGS=""
-  if [ -n "$REDIS_PASS" ]; then
-    REDIS_ARGS="--requirepass $REDIS_PASS"
+  if [ "$PG_EXISTS" -gt 0 ]; then
+    log_info "PostgreSQL container exists, starting..."
+    docker start rymevalor-postgres >/dev/null 2>&1 || true
+    # Read existing password from container
+    DB_PASS=$(docker exec rymevalor-postgres printenv POSTGRES_PASSWORD 2>/dev/null || echo "")
+  else
+    # Generate password if not set
+    if [ -z "$DB_PASS" ]; then
+      DB_PASS=$(generate_password)
+    fi
+    log_step "Pulling PostgreSQL image..."
+    docker pull postgres:16-alpine 2>&1 | tail -1
+    log_step "Starting PostgreSQL on port $PG_PORT..."
+    docker run -d \
+      --name rymevalor-postgres \
+      --restart unless-stopped \
+      -e POSTGRES_USER="$DB_USER" \
+      -e POSTGRES_PASSWORD="$DB_PASS" \
+      -e POSTGRES_DB="$DB_NAME" \
+      -p "${PG_PORT}:5432" \
+      -v rymevalor-pgdata:/var/lib/postgresql/data \
+      postgres:16-alpine >/dev/null
   fi
-  docker run -d \
-    --name rymevalor-redis \
-    --restart unless-stopped \
-    -p "${RED_PORT}:6379" \
-    -v rymevalor-redisdata:/data \
-    redis:7-alpine redis-server $REDIS_ARGS >/dev/null
+
+  if [ "$RED_EXISTS" -gt 0 ]; then
+    log_info "Redis container exists, starting..."
+    docker start rymevalor-redis >/dev/null 2>&1 || true
+  else
+    log_step "Pulling Redis image..."
+    docker pull redis:7-alpine 2>&1 | tail -1
+    log_step "Starting Redis on port $RED_PORT..."
+    local REDIS_ARGS=""
+    if [ -n "$REDIS_PASS" ]; then
+      REDIS_ARGS="--requirepass $REDIS_PASS"
+    fi
+    docker run -d \
+      --name rymevalor-redis \
+      --restart unless-stopped \
+      -p "${RED_PORT}:6379" \
+      -v rymevalor-redisdata:/data \
+      redis:7-alpine redis-server $REDIS_ARGS >/dev/null
+  fi
 
   # Update ports for config
   DB_PORT=$PG_PORT
@@ -414,6 +422,7 @@ run_migrations() {
   for migration_dir in "$MIGRATION_DIR"/*/; do
     for migration_file in "$migration_dir"*.up.sql; do
       if [ -f "$migration_file" ]; then
+        log_step "Running $(basename $migration_file)..."
         docker exec -i rymevalor-postgres psql -U "$DB_USER" -d "$DB_NAME" < "$migration_file" 2>/dev/null || true
       fi
     done
@@ -523,6 +532,12 @@ install_binaries() {
 generate_config() {
   log_step "Generating configuration..."
 
+  # Ensure we have a password
+  if [ -z "$DB_PASS" ]; then
+    DB_PASS=$(generate_password)
+    log_warn "No database password set, generated new one"
+  fi
+
   local JWT_SECRET
   JWT_SECRET=$(generate_password)
 
@@ -592,6 +607,16 @@ EOF
 create_services() {
   log_step "Creating systemd services..."
 
+  # Ensure user exists first
+  if ! id "$RYMEVISOR_USER" &>/dev/null; then
+    useradd --system --shell /bin/false --home-dir "$RYMEVISOR_HOME" "$RYMEVISOR_USER" 2>/dev/null || true
+    log_info "Created user: $RYMEVISOR_USER"
+  fi
+
+  # Ensure directories exist with correct ownership
+  mkdir -p "$RYMEVISOR_HOME"/{vms,images,backups,cloud-init,disks} /var/log/rymevisor /var/lib/nats
+  chown -R "$RYMEVISOR_USER:$RYMEVISOR_GROUP" "$RYMEVISOR_HOME" /var/log/rymevisor /var/lib/nats 2>/dev/null || true
+
   local SERVICES=(
     "control-plane:${PORT_CONTROL_PLANE}"
     "auth-service:${PORT_AUTH_SERVICE}"
@@ -623,21 +648,20 @@ Restart=always
 RestartSec=5
 LimitNOFILE=65535
 NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=${RYMEVISOR_HOME} /var/log/rymevisor /var/lib/nats
-PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
   done
 
+  # Force systemd to reload and recognize new units
+  systemctl daemon-reexec 2>/dev/null || true
+  sleep 1
   systemctl daemon-reload
 
   for entry in "${SERVICES[@]}"; do
     local name="${entry%%:*}"
-    systemctl enable "rymevisor-${name}"
+    systemctl enable "rymevisor-${name}" 2>/dev/null || true
   done
 
   log_info "Systemd services created and enabled"
