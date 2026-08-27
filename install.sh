@@ -583,6 +583,8 @@ RYMEVISOR_METRICS_PATH=/metrics
 EOF
 
   chmod 600 "${RYMEVISOR_CONFIG}/config.env"
+  chown root:${RYMEVISOR_GROUP} "${RYMEVISOR_CONFIG}/config.env"
+  chmod 640 "${RYMEVISOR_CONFIG}/config.env"
 
   # Save version
   echo "$RYMEVISOR_VERSION" > "${RYMEVISOR_CONFIG}/VERSION"
