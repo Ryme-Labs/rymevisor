@@ -1,10 +1,28 @@
-name: CI
+name: CI & Release
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0)'
+        required: false
+      bump:
+        description: 'Auto bump version'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   lint:
@@ -81,3 +99,152 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+  version:
+    name: Determine Version
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [lint, test, build]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          elif [ -f VERSION ]; then
+            VERSION=$(cat VERSION | tr -d '[:space:]')
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            VERSION="v0.1.0-$(date +%Y%m%d)-${GITHUB_SHA::7}"
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "## Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Auto bump version
+        if: github.event.inputs.bump != ''
+        run: |
+          BUMP="${{ github.event.inputs.bump }}"
+          if [ -f VERSION ]; then
+            CURRENT=$(cat VERSION | tr -d '[:space:]' | sed 's/^v//')
+          else
+            CURRENT="0.1.0"
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          case "$BUMP" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "$NEW_VERSION" > VERSION
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+
+  release-build:
+    name: Build Release ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: version
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          SERVICES="control-plane api-gateway auth-service scheduler networking-engine storage-manager node-agent"
+          for svc in $SERVICES; do
+            echo "Building ${svc}..."
+            go build -ldflags="-s -w -X main.version=${{ needs.version.outputs.version }}" \
+              -o "dist/${svc}-${{ matrix.goos }}-${{ matrix.goarch }}" \
+              "./cmd/${svc}"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: [version, release-build]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Generate changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          fi
+
+          echo "## Changes" > CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "$CHANGES" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## Installation" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo '```bash' >> CHANGELOG.md
+          echo "curl -fsSL https://raw.githubusercontent.com/Ryme-Labs/rymevisor/main/install.sh | sudo bash" >> CHANGELOG.md
+          echo '```' >> CHANGELOG.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.version }}
+          name: "RymeVisor ${{ needs.version.outputs.version }}"
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/control-plane-*
+            dist/api-gateway-*
+            dist/auth-service-*
+            dist/scheduler-*
+            dist/networking-engine-*
+            dist/storage-manager-*
+            dist/node-agent-*
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
