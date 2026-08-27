@@ -51,7 +51,7 @@ NATS_PORT=4222
 DOMAIN=""
 ENABLE_TLS=false
 TLS_EMAIL=""
-REVERSE_PROXY=""  # nginx or caddy
+REVERSE_PROXY=""
 
 # Colors
 RED='\033[0;31m'
@@ -69,6 +69,7 @@ log_info()    { echo -e "${GREEN}[INFO]${NC} $*"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 log_step()    { echo -e "${CYAN}[STEP]${NC} $*"; }
+log_secret()  { echo -e "${YELLOW}[SECRET]${NC} $*"; }
 
 confirm() {
   local prompt="$1"
@@ -131,6 +132,20 @@ check_virtualization() {
       exit 1
     fi
   fi
+}
+
+wait_for_port() {
+  local port=$1
+  local timeout=${2:-30}
+  local i=0
+  while ! curl -sf "http://localhost:${port}/health" >/dev/null 2>&1; do
+    sleep 1
+    i=$((i + 1))
+    if [ $i -ge $timeout ]; then
+      return 1
+    fi
+  done
+  return 0
 }
 
 # ============================================================
@@ -196,16 +211,15 @@ install_deps_rocky() {
 }
 
 install_deps_arch() {
-  pacman -Sy --noconfirm --needed \
+  pacman -Syu --noconfirm --needed \
     curl wget git unzip jq \
     qemu-full \
     libvirt \
     bridge-utils \
-    cdrtools \
     nftables \
     postgresql \
     redis \
-    > /dev/null 2>&1
+    > /dev/null 2>&1 || true
 }
 
 install_nats() {
@@ -257,7 +271,7 @@ NATS_SERVICE
 
 setup_user() {
   if ! id "$RYMEVISOR_USER" &>/dev/null; then
-    useradd --system --shell /bin/false --home-dir "$RYMEVISOR_HOME" "$RYMEVISOR_USER"
+    useradd --system --shell /bin/false --home-dir "$RYMEVISOR_HOME" "$RYMEVISOR_USER" 2>/dev/null || true
     log_info "Created user: $RYMEVISOR_USER"
   fi
 }
@@ -280,16 +294,39 @@ setup_directories() {
 setup_database() {
   log_step "Setting up PostgreSQL..."
 
-  local PG_SERVICE
-  if systemctl is-active --quiet postgresql 2>/dev/null; then
-    PG_SERVICE="postgresql"
-  elif systemctl is-active --quiet postgresql16 2>/dev/null; then
-    PG_SERVICE="postgresql16"
-  elif systemctl is-active --quiet postgresql15 2>/dev/null; then
-    PG_SERVICE="postgresql15"
-  else
-    systemctl enable --now postgresql 2>/dev/null || true
-    PG_SERVICE="postgresql"
+  # Detect PostgreSQL service name
+  local PG_SERVICE=""
+  for svc in postgresql postgresql16 postgresql15 postgresql14; do
+    if systemctl list-unit-files | grep -q "^${svc}\.service"; then
+      PG_SERVICE="$svc"
+      break
+    fi
+  done
+
+  if [ -z "$PG_SERVICE" ]; then
+    log_error "PostgreSQL service not found"
+    return 1
+  fi
+
+  # Initialize PostgreSQL if needed (Arch/Fedora/Rocky)
+  local PG_DATA=$(sudo -u postgres psql -t -c "SHOW data_directory;" 2>/dev/null | tr -d ' ' || echo "")
+  if [ -z "$PG_DATA" ] || [ ! -d "$PG_DATA" ]; then
+    log_step "Initializing PostgreSQL..."
+    # Try initdb
+    sudo -u postgres initdb -D /var/lib/postgres/data 2>/dev/null || \
+    sudo -u postgres initdb -D /var/lib/pgsql/data 2>/dev/null || \
+    postgresql-setup --initdb 2>/dev/null || true
+  fi
+
+  # Start PostgreSQL
+  systemctl enable --now "$PG_SERVICE" 2>/dev/null || true
+  sleep 2
+
+  # Verify PostgreSQL is running
+  if ! sudo -u postgres psql -c "SELECT 1;" >/dev/null 2>&1; then
+    log_error "PostgreSQL failed to start"
+    log_warn "Try running: sudo -u postgres pg_ctl -D /var/lib/postgres/data start"
+    return 1
   fi
 
   # Generate password if not set
@@ -297,20 +334,39 @@ setup_database() {
     DB_PASS=$(generate_password)
   fi
 
-  sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || true
+  # Create user and database
+  sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || \
+    sudo -u postgres psql -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || true
   sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || true
   sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;" 2>/dev/null || true
+
+  # Allow password auth
+  local PG_HBA=$(sudo -u postgres psql -t -c "SHOW hba_file;" | tr -d ' ')
+  if [ -f "$PG_HBA" ]; then
+    # Add md5 auth for local connections before the default ident/auth
+    sed -i '/^local.*all.*all/i local   all             all                                     md5' "$PG_HBA" 2>/dev/null || true
+    sed -i '/^host.*all.*all.*127/i host    all             all             127.0.0.1/32            md5' "$PG_HBA" 2>/dev/null || true
+    systemctl restart "$PG_SERVICE" 2>/dev/null || true
+    sleep 1
+  fi
 
   log_info "Database configured: $DB_NAME @ $DB_HOST:$DB_PORT"
 }
 
 run_migrations() {
   log_step "Running database migrations..."
-  local DB_URL="postgres://$DB_USER:$DB_PASS@$DB_HOST:$DB_PORT/$DB_NAME?sslmode=disable"
 
-  for migration_dir in migrations/*/; do
-    local service_name
-    service_name=$(basename "$migration_dir")
+  local MIGRATION_DIR="/home/deyo/Rymelabs/rymevisor/migrations"
+  if [ ! -d "$MIGRATION_DIR" ]; then
+    # Try to find migrations from installed location or git clone
+    MIGRATION_DIR="/opt/rymevisor-source/migrations"
+    if [ ! -d "$MIGRATION_DIR" ]; then
+      log_warn "Migration files not found, skipping migrations"
+      return 0
+    fi
+  fi
+
+  for migration_dir in "$MIGRATION_DIR"/*/; do
     for migration_file in "$migration_dir"*.up.sql; do
       if [ -f "$migration_file" ]; then
         sudo -u postgres psql -d "$DB_NAME" -f "$migration_file" 2>/dev/null || true
@@ -371,7 +427,9 @@ install_binaries() {
       export PATH=$PATH:/usr/local/go/bin
     fi
 
-    git clone --depth 1 https://github.com/Ryme-Labs/rymevisor.git "$SRC_DIR" 2>/dev/null || true
+    if [ ! -d "$SRC_DIR" ]; then
+      git clone --depth 1 https://github.com/Ryme-Labs/rymevisor.git "$SRC_DIR" 2>/dev/null || true
+    fi
 
     if [ -f "${SRC_DIR}/go.mod" ]; then
       (cd "$SRC_DIR" && go mod tidy 2>/dev/null)
@@ -384,7 +442,6 @@ install_binaries() {
             log_warn "Failed to build ${service}"
         fi
       done
-      rm -rf "$SRC_DIR"
     fi
   fi
 
@@ -444,7 +501,21 @@ RYMEVISOR_METRICS_PATH=/metrics
 EOF
 
   chmod 600 "${RYMEVISOR_CONFIG}/config.env"
+
+  # Save version
+  echo "$RYMEVISOR_VERSION" > "${RYMEVISOR_CONFIG}/VERSION"
+  chmod 600 "${RYMEVISOR_CONFIG}/VERSION"
+
   log_info "Configuration written to ${RYMEVISOR_CONFIG}/config.env"
+
+  # Show credentials to user
+  echo ""
+  log_secret "=== Generated Credentials ==="
+  log_secret "Database URL: postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+  log_secret "JWT Secret:   ${JWT_SECRET}"
+  log_secret ""
+  log_secret "Save these! They are also in ${RYMEVISOR_CONFIG}/config.env"
+  echo ""
 }
 
 # ============================================================
@@ -513,8 +584,11 @@ setup_nginx() {
   log_step "Setting up Nginx reverse proxy..."
 
   if ! command -v nginx &>/dev/null; then
-    apt-get install -y -qq nginx > /dev/null 2>&1 || dnf install -y -q nginx > /dev/null 2>&1
+    apt-get install -y -qq nginx > /dev/null 2>&1 || dnf install -y -q nginx > /dev/null 2>&1 || \
+    pacman -S --noconfirm nginx > /dev/null 2>&1 || true
   fi
+
+  mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled 2>/dev/null || true
 
   if [ -n "$DOMAIN" ]; then
     cat > /etc/nginx/sites-available/rymevisor << NGINX_CONF
@@ -558,8 +632,7 @@ server {
 }
 NGINX_CONF
 
-    ln -sf /etc/nginx/sites-available/rymevisor /etc/nginx/sites-enabled/
-    rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/rymevisor /etc/nginx/sites-enabled/ 2>/dev/null || true
 
     if [ "$ENABLE_TLS" = true ] && [ -n "$TLS_EMAIL" ]; then
       apt-get install -y -qq certbot python3-certbot-nginx > /dev/null 2>&1 || true
@@ -587,11 +660,10 @@ server {
 }
 NGINX_CONF
 
-    ln -sf /etc/nginx/sites-available/rymevisor /etc/nginx/sites-enabled/
-    rm -f /etc/nginx/sites-enabled/default
+    ln -sf /etc/nginx/sites-available/rymevisor /etc/nginx/sites-enabled/ 2>/dev/null || true
   fi
 
-  nginx -t && systemctl reload nginx
+  nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
   log_info "Nginx configured"
 }
 
@@ -603,22 +675,13 @@ setup_caddy() {
     chmod +x /usr/local/bin/caddy
   fi
 
+  local CADDY_CONFIG
   if [ -n "$DOMAIN" ]; then
-    local CADDY_CONFIG="${DOMAIN} {
+    CADDY_CONFIG="${DOMAIN} {
     reverse_proxy localhost:${PORT_API_GATEWAY}
 }"
-    if [ "$ENABLE_TLS" = true ]; then
-      CADDY_CONFIG="${DOMAIN} {
-    reverse_proxy localhost:${PORT_API_GATEWAY}
-}"
-    else
-      CADDY_CONFIG="${DOMAIN} {
-    tls internal
-    reverse_proxy localhost:${PORT_API_GATEWAY}
-}"
-    fi
   else
-    local CADDY_CONFIG=":80 {
+    CADDY_CONFIG=":80 {
     reverse_proxy localhost:${PORT_API_GATEWAY}
 }"
   fi
@@ -654,6 +717,7 @@ setup_firewall() {
   log_step "Configuring firewall..."
 
   if command -v nft &>/dev/null; then
+    mkdir -p /etc/nftables.d
     cat > /etc/nftables.d/rymevisor.nft << EOF
 # RymeVisor firewall rules
 table inet rymevalor {
@@ -762,15 +826,30 @@ do_install() {
 
   setup_firewall
 
-  # Start services
-  log_step "Starting services..."
-  systemctl start rymevalor-auth-service
-  systemctl start rymevalor-control-plane
-  systemctl start rymevalor-scheduler
-  systemctl start rymevalor-networking-engine
-  systemctl start rymevalor-storage-manager
-  systemctl start rymevalor-api-gateway
-  systemctl start rymevalor-node-agent
+  # Start infrastructure services first
+  log_step "Starting infrastructure..."
+  systemctl start redis 2>/dev/null || true
+  systemctl start nats 2>/dev/null || true
+
+  # Start RymeVisor services
+  log_step "Starting RymeVisor services..."
+  local SVCS=(
+    "rymevisor-auth-service"
+    "rymevisor-control-plane"
+    "rymevisor-scheduler"
+    "rymevisor-networking-engine"
+    "rymevisor-storage-manager"
+    "rymevisor-api-gateway"
+    "rymevisor-node-agent"
+  )
+
+  for svc in "${SVCS[@]}"; do
+    systemctl start "$svc" 2>/dev/null && log_info "Started: $svc" || log_warn "Failed to start: $svc"
+  done
+
+  # Wait for services to be ready
+  log_step "Waiting for services to start..."
+  sleep 3
 
   echo ""
   echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
@@ -781,8 +860,12 @@ do_install() {
   log_info "API:       http://${DOMAIN:-localhost}/api/v1"
   log_info "Health:    http://localhost:${PORT_API_GATEWAY}/health"
   echo ""
-  log_info "Services managed by systemd:"
-  systemctl list-units --type=service --state=running | grep rymevalor || true
+  log_info "Services managed by systemctl:"
+  for svc in "${SVCS[@]}"; do
+    local status
+    status=$(systemctl is-active "$svc" 2>/dev/null || echo "stopped")
+    echo "    $svc: $status"
+  done
   echo ""
   log_info "Config: ${RYMEVISOR_CONFIG}/config.env"
   log_info "Logs:   journalctl -u rymevalor-* -f"
@@ -803,19 +886,33 @@ do_update() {
 
   # Stop services
   log_step "Stopping services..."
-  systemctl stop rymevalor-api-gateway 2>/dev/null || true
-  systemctl stop rymevalor-control-plane 2>/dev/null || true
-  systemctl stop rymevalor-auth-service 2>/dev/null || true
-  systemctl stop rymevalor-scheduler 2>/dev/null || true
-  systemctl stop rymevalor-networking-engine 2>/dev/null || true
-  systemctl stop rymevalor-storage-manager 2>/dev/null || true
-  systemctl stop rymevalor-node-agent 2>/dev/null || true
+  local SVCS=(
+    "rymevisor-api-gateway"
+    "rymevisor-control-plane"
+    "rymevisor-auth-service"
+    "rymevisor-scheduler"
+    "rymevisor-networking-engine"
+    "rymevisor-storage-manager"
+    "rymevisor-node-agent"
+  )
+
+  for svc in "${SVCS[@]}"; do
+    systemctl stop "$svc" 2>/dev/null || true
+  done
 
   # Backup
   log_step "Creating backup..."
   local BACKUP_DIR="${RYMEVISOR_HOME}/backups/update-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"
-  pg_dump -U "$DB_USER" "$DB_NAME" > "${BACKUP_DIR}/database.sql" 2>/dev/null || true
+
+  # Read DB URL from config
+  local DB_URL
+  DB_URL=$(grep RYMEVISOR_DATABASE_URL "${RYMEVISOR_CONFIG}/config.env" 2>/dev/null | cut -d= -f2-)
+
+  if [ -n "$DB_URL" ]; then
+    PGPASSWORD="${DB_PASS:-}" pg_dump -U "${DB_USER}" "${DB_NAME}" > "${BACKUP_DIR}/database.sql" 2>/dev/null || \
+    sudo -u postgres pg_dump "${DB_NAME}" > "${BACKUP_DIR}/database.sql" 2>/dev/null || true
+  fi
   cp -r "${RYMEVISOR_CONFIG}" "${BACKUP_DIR}/config" 2>/dev/null || true
   log_info "Backup created: $BACKUP_DIR"
 
@@ -825,16 +922,16 @@ do_update() {
 
   # Restart
   log_step "Starting services..."
-  systemctl start rymevalor-auth-service
-  systemctl start rymevalor-control-plane
-  systemctl start rymevalor-scheduler
-  systemctl start rymevalor-networking-engine
-  systemctl start rymevalor-storage-manager
-  systemctl start rymevalor-api-gateway
-  systemctl start rymevalor-node-agent
+  systemctl start redis 2>/dev/null || true
+  systemctl start nats 2>/dev/null || true
+
+  for svc in "${SVCS[@]}"; do
+    systemctl start "$svc" 2>/dev/null || true
+  done
 
   echo ""
   log_info "Update complete: $OLD_VERSION -> $RYMEVISOR_VERSION"
+  log_info "Backup saved at: $BACKUP_DIR"
 }
 
 # ============================================================
@@ -869,6 +966,11 @@ do_uninstall() {
     rm -f "/etc/systemd/system/rymevisor-${svc}.service"
   done
 
+  # Stop NATS if we installed it
+  systemctl stop nats 2>/dev/null || true
+  systemctl disable nats 2>/dev/null || true
+  rm -f /etc/systemd/system/nats.service
+
   systemctl daemon-reload
 
   # Remove binaries
@@ -883,12 +985,19 @@ do_uninstall() {
     sudo -u postgres dropdb "$DB_NAME" 2>/dev/null || true
     sudo -u postgres dropuser "$DB_USER" 2>/dev/null || true
     rm -rf "${RYMEVISOR_HOME}"
+    rm -rf /var/lib/nats
   fi
 
   # Remove reverse proxy config
   rm -f /etc/nginx/sites-available/rymevisor
   rm -f /etc/nginx/sites-enabled/rymevisor
   rm -f /etc/nftables.d/rymevisor.nft
+
+  # Remove caddy config
+  rm -f /etc/caddy/Caddyfile
+  systemctl stop caddy 2>/dev/null || true
+  systemctl disable caddy 2>/dev/null || true
+  rm -f /etc/systemd/system/caddy.service
 
   # Remove user
   userdel "$RYMEVISOR_USER" 2>/dev/null || true
@@ -909,6 +1018,22 @@ do_status() {
   echo -e "${CYAN}RymeVisor Status${NC}"
   echo ""
 
+  # Infrastructure
+  echo "Infrastructure:"
+  for svc in postgresql redis nats; do
+    local status
+    status=$(systemctl is-active "$svc" 2>/dev/null || echo "not found")
+    if [ "$status" = "active" ]; then
+      echo -e "  ${GREEN}●${NC} ${svc}: ${GREEN}running${NC}"
+    elif [ "$status" = "inactive" ]; then
+      echo -e "  ${YELLOW}●${NC} ${svc}: ${YELLOW}stopped${NC}"
+    else
+      echo -e "  ${RED}●${NC} ${svc}: ${RED}${status}${NC}"
+    fi
+  done
+
+  echo ""
+  echo "RymeVisor Services:"
   local SERVICES=(
     "api-gateway" "control-plane" "auth-service"
     "scheduler" "networking-engine" "storage-manager" "node-agent"
