@@ -328,40 +328,39 @@ start_infra() {
     DB_PASS=$(generate_password)
   fi
 
+  # Stop and remove any existing containers (clean slate)
+  docker stop rymevalor-postgres rymevalor-redis 2>/dev/null || true
+  docker rm rymevalor-postgres rymevalor-redis 2>/dev/null || true
+
   # Pull images
-  docker pull postgres:16-alpine >/dev/null 2>&1 || true
-  docker pull redis:7-alpine >/dev/null 2>&1 || true
+  log_step "Pulling Docker images..."
+  docker pull postgres:16-alpine 2>&1 | tail -1
+  docker pull redis:7-alpine 2>&1 | tail -1
 
-  # PostgreSQL
-  if docker ps -a --format '{{.Names}}' | grep -q '^rymevisor-postgres$'; then
-    log_info "PostgreSQL container already exists, starting..."
-    docker start rymevalor-postgres >/dev/null 2>&1 || true
-  else
-    log_step "Starting PostgreSQL container..."
-    docker run -d \
-      --name rymevalor-postgres \
-      --restart unless-stopped \
-      -e POSTGRES_USER="$DB_USER" \
-      -e POSTGRES_PASSWORD="$DB_PASS" \
-      -e POSTGRES_DB="$DB_NAME" \
-      -p "${DB_PORT}:5432" \
-      -v rymevalor-pgdata:/var/lib/postgresql/data \
-      postgres:16-alpine >/dev/null
-  fi
+  # Start PostgreSQL
+  log_step "Starting PostgreSQL container..."
+  docker run -d \
+    --name rymevalor-postgres \
+    --restart unless-stopped \
+    -e POSTGRES_USER="$DB_USER" \
+    -e POSTGRES_PASSWORD="$DB_PASS" \
+    -e POSTGRES_DB="$DB_NAME" \
+    -p "${DB_PORT}:5432" \
+    -v rymevalor-pgdata:/var/lib/postgresql/data \
+    postgres:16-alpine >/dev/null
 
-  # Redis
-  if docker ps -a --format '{{.Names}}' | grep -q '^rymevisor-redis$'; then
-    log_info "Redis container already exists, starting..."
-    docker start rymevalor-redis >/dev/null 2>&1 || true
-  else
-    log_step "Starting Redis container..."
-    docker run -d \
-      --name rymevalor-redis \
-      --restart unless-stopped \
-      -p "${REDIS_PORT}:6379" \
-      -v rymevalor-redisdata:/data \
-      redis:7-alpine >/dev/null
+  # Start Redis
+  log_step "Starting Redis container..."
+  local REDIS_ARGS=""
+  if [ -n "$REDIS_PASS" ]; then
+    REDIS_ARGS="--requirepass $REDIS_PASS"
   fi
+  docker run -d \
+    --name rymevalor-redis \
+    --restart unless-stopped \
+    -p "${REDIS_PORT}:6379" \
+    -v rymevalor-redisdata:/data \
+    redis:7-alpine redis-server $REDIS_ARGS >/dev/null
 
   # Wait for PostgreSQL to be ready
   log_step "Waiting for PostgreSQL to be ready..."
