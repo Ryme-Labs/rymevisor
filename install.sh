@@ -215,26 +215,43 @@ install_deps_rocky() {
 }
 
 install_deps_arch() {
-  pacman -Syu --noconfirm --needed \
-    curl wget git unzip jq \
-    qemu-full \
-    libvirt \
-    bridge-utils \
-    nftables \
-    postgresql \
-    redis 2>&1 | tail -5
+  # Update first, then install packages one by one to handle prompts
+  pacman -Syu --noconfirm 2>&1 | tail -3 || true
+
+  local PACKAGES=(
+    curl wget git unzip jq
+    qemu-full
+    libvirt
+    bridge-utils
+    nftables
+    postgresql
+    redis
+  )
+
+  for pkg in "${PACKAGES[@]}"; do
+    if ! pacman -Q "$pkg" &>/dev/null; then
+      log_step "Installing $pkg..."
+      # Use --noconfirm and handle valkey conflict
+      yes "" | pacman -S --noconfirm "$pkg" 2>&1 | tail -2 || true
+    fi
+  done
 
   # Verify critical packages
   local missing=""
-  for pkg in postgresql redis qemu-system-x86_64; do
+  for pkg in postgresql qemu-system-x86_64; do
     if ! pacman -Q "$pkg" &>/dev/null; then
       missing="$missing $pkg"
     fi
   done
 
+  # Check for redis or valkey
+  if ! pacman -Q redis &>/dev/null && ! pacman -Q valkey &>/dev/null; then
+    missing="$missing redis/valkey"
+  fi
+
   if [ -n "$missing" ]; then
     log_error "Failed to install:$missing"
-    log_error "Run manually: sudo pacman -S$missing"
+    log_error "Install manually: sudo pacman -S$missing"
     return 1
   fi
 
@@ -886,7 +903,8 @@ do_install() {
 
   # Start infrastructure services first
   log_step "Starting infrastructure..."
-  systemctl start redis 2>/dev/null || true
+  # Redis might be called valkey on Arch
+  systemctl start redis 2>/dev/null || systemctl start valkey 2>/dev/null || true
   systemctl start nats 2>/dev/null || true
 
   # Start RymeVisor services
@@ -978,7 +996,7 @@ do_update() {
 
   # Restart
   log_step "Starting services..."
-  systemctl start redis 2>/dev/null || true
+  systemctl start redis 2>/dev/null || systemctl start valkey 2>/dev/null || true
   systemctl start nats 2>/dev/null || true
 
   for svc in "${SVCS[@]}"; do
@@ -1076,7 +1094,7 @@ do_status() {
 
   # Infrastructure
   echo "Infrastructure:"
-  for svc in postgresql redis nats; do
+  for svc in postgresql redis valkey nats; do
     local status
     status=$(systemctl is-active "$svc" 2>/dev/null || echo "not found")
     if [ "$status" = "active" ]; then
