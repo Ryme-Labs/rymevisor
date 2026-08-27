@@ -219,9 +219,9 @@ install_deps_arch() {
 
   local PACKAGES=(
     curl wget git unzip jq
-    qemu-full
+    qemu-system-x86
     libvirt
-    bridge-utils
+    bridge
     nftables
     docker docker-compose
   )
@@ -233,10 +233,11 @@ install_deps_arch() {
     fi
   done
 
-  systemctl enable --now docker
+  systemctl enable --now docker 2>/dev/null || true
 
+  # Verify critical packages
   local missing=""
-  for pkg in docker qemu-system-x86_64; do
+  for pkg in qemu-system-x86 docker; do
     if ! pacman -Q "$pkg" &>/dev/null; then
       missing="$missing $pkg"
     fi
@@ -244,7 +245,6 @@ install_deps_arch() {
 
   if [ -n "$missing" ]; then
     log_error "Failed to install:$missing"
-    log_error "Install manually: sudo pacman -S$missing"
     return 1
   fi
 
