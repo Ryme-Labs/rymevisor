@@ -444,7 +444,7 @@ install_binaries() {
     aarch64) ARCH="arm64" ;;
   esac
 
-  local SERVICES=("control-plane" "api-gateway" "auth-service" "scheduler" "networking-engine" "storage-manager" "node-agent")
+  local SERVICES=("control-plane" "api-gateway" "scheduler" "networking-engine" "storage-manager" "node-agent")
   local ANY_INSTALLED=false
 
   # 1. Try building from local source first
@@ -915,6 +915,11 @@ do_install() {
   # Start NATS
   log_step "Starting infrastructure..."
   systemctl start nats 2>/dev/null || true
+
+  # Kill any stale processes from previous installs
+  log_step "Cleaning up stale processes..."
+  pkill -f "rymevisor-" 2>/dev/null || true
+  sleep 1
 
   # Start RymeVisor services
   log_step "Starting RymeVisor services..."

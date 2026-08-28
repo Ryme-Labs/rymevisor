@@ -102,6 +102,11 @@ func ContentType(next http.Handler) http.Handler {
 
 func RequireAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" || r.URL.Path == "/health/live" || r.URL.Path == "/health/ready" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		validKey := os.Getenv("RYMEVISOR_API_KEY")
 		if validKey == "" {
 			w.Header().Set("Content-Type", "application/json")
