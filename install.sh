@@ -592,15 +592,6 @@ EOF
   chmod 600 "${RYMEVISOR_CONFIG}/VERSION"
 
   log_info "Configuration written to ${RYMEVISOR_CONFIG}/config.env"
-
-  # Show credentials to user
-  echo ""
-  log_secret "=== API Key ==="
-  log_secret "API Key: ${API_KEY}"
-  log_secret ""
-  log_secret "Use this key in the X-API-Key header for all requests"
-  log_secret "Saved in ${RYMEVISOR_CONFIG}/config.env"
-  echo ""
 }
 
 # ============================================================
@@ -952,12 +943,14 @@ do_install() {
   log_info "API:       http://${DOMAIN:-localhost}/api/v1"
   log_info "Health:    http://localhost:${PORT_API_GATEWAY}/health"
   echo ""
-  log_info "Services managed by systemctl:"
-  for svc in "${SVCS[@]}"; do
-    local status
-    status=$(systemctl is-active "$svc" 2>/dev/null || echo "stopped")
-    echo "    $svc: $status"
-  done
+  echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║                  SAVE YOUR API KEY                      ║${NC}"
+  echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
+  echo -e "${GREEN}║  API Key: ${API_KEY}${GREEN}$(printf '%*s' $((41 - ${#API_KEY})) '')║${NC}"
+  echo -e "${GREEN}║                                                          ║${NC}"
+  echo -e "${GREEN}║  Header:  X-API-Key: <your-key>                          ║${NC}"
+  echo -e "${GREEN}║  Example: curl -H 'X-API-Key: ${API_KEY:0:8}...' http://...${GREEN}$(printf '%*s' $((34 - ${#API_KEY})) '')║${NC}"
+  echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
   echo ""
   log_info "Config: ${RYMEVISOR_CONFIG}/config.env"
   log_info "Logs:   journalctl -u rymevalor-* -f"
