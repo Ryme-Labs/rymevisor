@@ -74,7 +74,7 @@ jobs:
           RYMEVISOR_DATABASE_URL: postgres://rymevisor:rymevisor@localhost:5432/rymevisor?sslmode=disable
           RYMEVISOR_NATS_URL: nats://localhost:4222
           RYMEVISOR_REDIS_ADDR: localhost:6379
-          RYMEVISOR_JWT_SECRET: test-secret
+          RYMEVISOR_API_KEY: test-key-for-ci
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -92,7 +92,7 @@ jobs:
 
       - name: Build all services
         run: |
-          SERVICES="control-plane api-gateway auth-service scheduler networking-engine storage-manager node-agent"
+          SERVICES="control-plane api-gateway scheduler networking-engine storage-manager node-agent"
           for svc in $SERVICES; do
             echo "Building ${svc}..."
             CGO_ENABLED=0 go build -o /dev/null "./cmd/${svc}"
@@ -177,7 +177,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          SERVICES="control-plane api-gateway auth-service scheduler networking-engine storage-manager node-agent"
+          SERVICES="control-plane api-gateway scheduler networking-engine storage-manager node-agent"
           for svc in $SERVICES; do
             echo "Building ${svc}..."
             go build -ldflags="-s -w -X main.version=${{ needs.version.outputs.version }}" \
@@ -242,7 +242,6 @@ jobs:
           files: |
             dist/control-plane-*
             dist/api-gateway-*
-            dist/auth-service-*
             dist/scheduler-*
             dist/networking-engine-*
             dist/storage-manager-*
