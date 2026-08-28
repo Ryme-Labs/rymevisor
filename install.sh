@@ -322,8 +322,8 @@ start_infra() {
   log_step "Starting infrastructure containers..."
 
   # Check if containers already exist
-  local PG_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevalor-postgres$' || true)
-  local RED_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevalor-redis$' || true)
+  local PG_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevisor-postgres$' || true)
+  local RED_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevisor-redis$' || true)
 
   # Find available ports
   local PG_PORT=$DB_PORT
@@ -344,7 +344,14 @@ start_infra() {
     docker start rymevalor-postgres >/dev/null 2>&1 || true
     # Read existing password from container
     DB_PASS=$(docker exec rymevalor-postgres printenv POSTGRES_PASSWORD 2>/dev/null || echo "")
-  else
+    if [ -z "$DB_PASS" ]; then
+      log_warn "Could not read DB password from container, recreating..."
+      docker rm -f rymevalor-postgres >/dev/null 2>&1 || true
+      PG_EXISTS=0
+    fi
+  fi
+
+  if [ "${PG_EXISTS:-0}" -eq 0 ]; then
     # Generate password if not set
     if [ -z "$DB_PASS" ]; then
       DB_PASS=$(generate_password)
@@ -600,11 +607,24 @@ EOF
 create_services() {
   log_step "Creating systemd services..."
 
+  # Remove stale service files for services we no longer build
+  for stale in auth-service; do
+    if [ -f "/etc/systemd/system/rymevisor-${stale}.service" ]; then
+      systemctl stop "rymevisor-${stale}" 2>/dev/null || true
+      systemctl disable "rymevisor-${stale}" 2>/dev/null || true
+      rm -f "/etc/systemd/system/rymevisor-${stale}.service"
+      log_info "Removed stale service: rymevalor-${stale}"
+    fi
+  done
+
   # Ensure user exists first
   if ! id "$RYMEVISOR_USER" &>/dev/null; then
     useradd --system --shell /bin/false --home-dir "$RYMEVISOR_HOME" "$RYMEVISOR_USER" 2>/dev/null || true
     log_info "Created user: $RYMEVISOR_USER"
   fi
+
+  # Ensure user is in docker group (needed to read container env vars)
+  usermod -aG docker "$RYMEVISOR_USER" 2>/dev/null || true
 
   # Ensure directories exist with correct ownership
   mkdir -p "$RYMEVISOR_HOME"/{vms,images,backups,cloud-init,disks} /var/log/rymevisor /var/lib/nats
@@ -921,6 +941,9 @@ do_install() {
   pkill -f "rymevisor-" 2>/dev/null || true
   sleep 1
 
+  # Ensure systemd knows about the service files
+  systemctl daemon-reload
+
   # Start RymeVisor services
   log_step "Starting RymeVisor services..."
   local SVCS=(
@@ -938,7 +961,23 @@ do_install() {
 
   # Wait for services to be ready
   log_step "Waiting for services to start..."
-  sleep 3
+  sleep 5
+
+  # Verify services are healthy
+  log_step "Verifying services..."
+  local all_healthy=true
+  for svc in "${SVCS[@]}"; do
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+      log_info "OK: $svc"
+    else
+      log_error "FAIL: $svc (check: journalctl -u $svc -n 20)"
+      all_healthy=false
+    fi
+  done
+
+  if [ "$all_healthy" = false ]; then
+    log_warn "Some services failed to start. Check logs with: journalctl -u rymevalor-* -n 50"
+  fi
 
   echo ""
   log_info "Installation Complete!"
