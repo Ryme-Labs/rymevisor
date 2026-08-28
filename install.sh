@@ -532,7 +532,7 @@ generate_config() {
   log_step "Generating configuration..."
 
   # Ensure we have an API key
-  if [ -z "$API_KEY" ]; then
+  if [ -z "${API_KEY:-}" ]; then
     API_KEY=$(generate_password)
     log_warn "No API key set, generated new one"
   fi
