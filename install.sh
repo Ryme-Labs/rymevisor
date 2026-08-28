@@ -981,7 +981,6 @@ do_update() {
   local SVCS=(
     "rymevisor-api-gateway"
     "rymevisor-control-plane"
-    "rymevisor-auth-service"
     "rymevisor-scheduler"
     "rymevisor-networking-engine"
     "rymevisor-storage-manager"
@@ -1135,7 +1134,7 @@ do_status() {
   echo ""
   echo "RymeVisor Services:"
   local SERVICES=(
-    "api-gateway" "control-plane" "auth-service"
+    "api-gateway" "control-plane"
     "scheduler" "networking-engine" "storage-manager" "node-agent"
   )
 
@@ -1155,6 +1154,31 @@ do_status() {
 }
 
 # ============================================================
+# Version Check
+# ============================================================
+
+is_installed() {
+  [ -f "${RYMEVISOR_CONFIG}/config.env" ] && [ -f "${RYMEVISOR_BIN}/rymevisor-api-gateway" ]
+}
+
+get_installed_version() {
+  cat "${RYMEVISOR_CONFIG}/VERSION" 2>/dev/null || echo ""
+}
+
+get_latest_version() {
+  local latest
+  latest=$(curl -fsSL "https://api.github.com/repos/Ryme-Labs/rymevisor/releases/latest" 2>/dev/null | jq -r '.tag_name' 2>/dev/null)
+  if [ -z "$latest" ] || [ "$latest" = "null" ]; then
+    latest=$(curl -fsSL "https://api.github.com/repos/Ryme-Labs/rymevisor/tags" 2>/dev/null | jq -r '.[0].name' 2>/dev/null)
+  fi
+  echo "$latest"
+}
+
+version_gt() {
+  [ "$1" != "$2" ] && [ "$(printf '%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]
+}
+
+# ============================================================
 # Entry Point
 # ============================================================
 
@@ -1164,18 +1188,99 @@ usage() {
   echo "Commands:"
   echo "  install    Install RymeVisor (default)"
   echo "  update     Update to latest version"
-  echo "  uninstall  Remove RymeVisor"
+  echo  "  uninstall  Remove RymeVisor"
   echo "  status     Show service status"
   echo "  help       Show this help"
   echo ""
 }
 
-case "${1:-install}" in
+interactive_menu() {
+  echo ""
+  echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║         RymeVisor Installer              ║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
+  echo ""
+
+  if is_installed; then
+    local INSTALLED_VERSION
+    INSTALLED_VERSION=$(get_installed_version)
+    echo -e "  ${GREEN}● RymeVisor is installed${NC} (version: ${INSTALLED_VERSION:-unknown})"
+    echo ""
+
+    log_step "Checking for updates..."
+    local LATEST_VERSION
+    LATEST_VERSION=$(get_latest_version)
+
+    if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ]; then
+      if [ "$INSTALLED_VERSION" = "$LATEST_VERSION" ]; then
+        echo -e "  ${GREEN}✓ You are on the latest version ($LATEST_VERSION)${NC}"
+      elif version_gt "$LATEST_VERSION" "$INSTALLED_VERSION"; then
+        echo -e "  ${YELLOW}↑ New version available: $LATEST_VERSION (current: $INSTALLED_VERSION})${NC}"
+      else
+        echo -e "  ${GREEN}✓ You are ahead of latest release ($LATEST_VERSION)${NC}"
+      fi
+    else
+      echo -e "  ${YELLOW}⚠ Could not check for updates${NC}"
+    fi
+
+    echo ""
+    echo "  What would you like to do?"
+    echo ""
+    echo "    1) Update to latest version"
+    echo "    2) Show status"
+    echo "    3) Uninstall"
+    echo "    4) Exit"
+    echo ""
+
+    local choice
+    read -rp "  Select [1-4]: " choice
+
+    case "$choice" in
+      1) do_update ;;
+      2) do_status; interactive_menu ;;
+      3) do_uninstall ;;
+      4|*) log_info "Goodbye!"; exit 0 ;;
+    esac
+  else
+    echo -e "  ${RED}● RymeVisor is not installed${NC}"
+    echo ""
+
+    log_step "Checking latest release..."
+    local LATEST_VERSION
+    LATEST_VERSION=$(get_latest_version)
+    if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ]; then
+      echo -e "  Latest version: ${GREEN}${LATEST_VERSION}${NC}"
+    fi
+
+    echo ""
+    echo "  What would you like to do?"
+    echo ""
+    echo "    1) Install RymeVisor"
+    echo "    2) Show help"
+    echo "    3) Exit"
+    echo ""
+
+    local choice
+    read -rp "  Select [1-3]: " choice
+
+    case "$choice" in
+      1) do_install ;;
+      2) usage; interactive_menu ;;
+      3|*) log_info "Goodbye!"; exit 0 ;;
+    esac
+  fi
+}
+
+case "${1:-}" in
   install)   do_install ;;
   update)    do_update ;;
   uninstall) do_uninstall ;;
   status)    do_status ;;
   help|-h|--help) usage ;;
+  "")
+    check_root
+    interactive_menu
+    ;;
   *)
     log_error "Unknown command: $1"
     usage
