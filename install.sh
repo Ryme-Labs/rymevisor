@@ -942,13 +942,19 @@ do_install() {
   log_info "API:       http://${DOMAIN:-localhost}/api/v1"
   log_info "Health:    http://localhost:${PORT_API_GATEWAY}/health"
   echo ""
+  local box_width=56
+  local api_key_len=${#API_KEY}
+  local key_line_pad=$(( box_width - 12 - api_key_len ))
+  local example_prefix="  Example: curl -H 'X-API-Key: ${API_KEY:0:8}...' http://..."
+  local example_len=${#example_prefix}
+  local example_pad=$(( box_width - example_len ))
   echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
   echo -e "${GREEN}║                  SAVE YOUR API KEY                      ║${NC}"
   echo -e "${GREEN}╠══════════════════════════════════════════════════════════╣${NC}"
-  echo -e "${GREEN}║  API Key: ${API_KEY}${GREEN}$(printf '%*s' $((41 - ${#API_KEY})) '')║${NC}"
+  echo -e "${GREEN}║  API Key: ${API_KEY}${GREEN}$(printf '%*s' $key_line_pad '')║${NC}"
   echo -e "${GREEN}║                                                          ║${NC}"
   echo -e "${GREEN}║  Header:  X-API-Key: <your-key>                          ║${NC}"
-  echo -e "${GREEN}║  Example: curl -H 'X-API-Key: ${API_KEY:0:8}...' http://...${GREEN}$(printf '%*s' $((34 - ${#API_KEY})) '')║${NC}"
+  echo -e "${GREEN}║${GREEN}${example_prefix}$(printf '%*s' $example_pad '')║${NC}"
   echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
   echo ""
   log_info "Config: ${RYMEVISOR_CONFIG}/config.env"
