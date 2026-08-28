@@ -1272,7 +1272,20 @@ case "${1:-}" in
   help|-h|--help) usage ;;
   "")
     check_root
-    interactive_menu
+    if [ -t 0 ]; then
+      interactive_menu
+    else
+      # Piped execution (curl | bash) - auto-install if not installed
+      if is_installed; then
+        log_info "RymeVisor is already installed (version: $(get_installed_version))"
+        log_info "Run with a command: install, update, uninstall, status"
+        log_info "Example: curl -fsSL ... | sudo bash -s -- update"
+        exit 0
+      else
+        log_info "Installing RymeVisor..."
+        do_install
+      fi
+    fi
     ;;
   *)
     log_error "Unknown command: $1"
