@@ -21,7 +21,7 @@ func NewFloatingIPRepository(pool *pgxpool.Pool) *FloatingIPRepository {
 func (r *FloatingIPRepository) Allocate(ctx context.Context, ip *domain.FloatingIP) error {
 	_, err := r.pool.Exec(ctx,
 		`INSERT INTO floating_ips (id, ip_address, network_id, vm_id, organization_id)
-		 VALUES ($1, $2::inet, $3, $4, $5)`,
+		 VALUES ($1, $2::inet, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid)`,
 		ip.ID, ip.IPAddress, ip.NetworkID, ip.VMID, ip.OrganizationID,
 	)
 	return err
@@ -35,7 +35,7 @@ func (r *FloatingIPRepository) Release(ctx context.Context, id string) error {
 func (r *FloatingIPRepository) List(ctx context.Context, organizationID string) ([]*domain.FloatingIP, error) {
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, ip_address::text, network_id, vm_id, organization_id, created_at
-		 FROM floating_ips WHERE organization_id = $1`, organizationID,
+		 FROM floating_ips ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -45,8 +45,12 @@ func (r *FloatingIPRepository) List(ctx context.Context, organizationID string) 
 	var ips []*domain.FloatingIP
 	for rows.Next() {
 		ip := &domain.FloatingIP{}
-		if err := rows.Scan(&ip.ID, &ip.IPAddress, &ip.NetworkID, &ip.VMID, &ip.OrganizationID, &ip.CreatedAt); err != nil {
+		var orgID *string
+		if err := rows.Scan(&ip.ID, &ip.IPAddress, &ip.NetworkID, &ip.VMID, &orgID, &ip.CreatedAt); err != nil {
 			return nil, err
+		}
+		if orgID != nil {
+			ip.OrganizationID = *orgID
 		}
 		ips = append(ips, ip)
 	}
@@ -61,7 +65,7 @@ func (r *FloatingIPRepository) FindAvailableIP(ctx context.Context, networkCIDR 
 
 	usedIPs := make(map[string]bool)
 	rows, err := r.pool.Query(ctx,
-		`SELECT ip_address::text FROM floating_ips WHERE organization_id = $1`, organizationID,
+		`SELECT ip_address::text FROM floating_ips`,
 	)
 	if err != nil {
 		return "", err

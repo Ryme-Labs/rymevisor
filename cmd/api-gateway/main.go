@@ -34,7 +34,6 @@ func main() {
 
 	serviceCfg := handler.ServiceConfig{
 		ControlPlaneURL: envOrDefault("RYMEVISOR_CONTROL_PLANE_URL", "localhost:8081"),
-		AuthURL:         envOrDefault("RYMEVISOR_AUTH_URL", "localhost:8082"),
 		NetworkURL:      envOrDefault("RYMEVISOR_NETWORK_URL", "localhost:8083"),
 		StorageURL:      envOrDefault("RYMEVISOR_STORAGE_URL", "localhost:8084"),
 		SchedulerURL:    envOrDefault("RYMEVISOR_SCHEDULER_URL", "localhost:8085"),
@@ -46,6 +45,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", gw.ServeHTTP())
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 	mux.Handle("/health/live", healthHandler.Liveness())
 	mux.Handle("/health/ready", healthHandler.Readiness())
 
@@ -54,6 +57,7 @@ func main() {
 	httpHandler = middleware.RealIP(httpHandler)
 	httpHandler = middleware.RequestTracing(httpHandler)
 	httpHandler = middleware.CORS()(httpHandler)
+	httpHandler = middleware.RequireAPIKey(httpHandler)
 	httpHandler = middleware.Logger(httpHandler)
 	httpHandler = middleware.Recoverer(httpHandler)
 	httpHandler = middleware.RateLimit(100, 200)(httpHandler)

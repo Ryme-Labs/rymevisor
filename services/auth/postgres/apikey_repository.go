@@ -68,12 +68,23 @@ func (r *APIKeyRepository) GetByPrefix(ctx context.Context, prefix string) (*dom
 }
 
 func (r *APIKeyRepository) List(ctx context.Context, organizationID string) ([]*domain.APIKey, error) {
-	query := `
-		SELECT id, name, description, prefix, key_hash, user_id, organization_id, permissions,
-			array_to_string(allowed_ips, ',') as allowed_ips_str, active, expires_at, last_used_at, created_at
-		FROM api_keys WHERE organization_id = $1 ORDER BY created_at DESC`
+	var query string
+	var args []any
 
-	rows, err := r.pool.Query(ctx, query, organizationID)
+	if organizationID != "" {
+		query = `
+			SELECT id, name, description, prefix, key_hash, user_id, organization_id, permissions,
+				array_to_string(allowed_ips, ',') as allowed_ips_str, active, expires_at, last_used_at, created_at
+			FROM api_keys WHERE organization_id = $1 ORDER BY created_at DESC`
+		args = append(args, organizationID)
+	} else {
+		query = `
+			SELECT id, name, description, prefix, key_hash, user_id, organization_id, permissions,
+				array_to_string(allowed_ips, ',') as allowed_ips_str, active, expires_at, last_used_at, created_at
+			FROM api_keys ORDER BY created_at DESC`
+	}
+
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list api keys: %w", err)
 	}

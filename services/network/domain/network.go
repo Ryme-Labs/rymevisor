@@ -12,55 +12,55 @@ const (
 )
 
 type PrivateNetwork struct {
-	ID               string
-	Name             string
-	OrganizationID   string
-	VpcID            *string
-	Type             NetworkType
-	CIDR             string
-	IPv6CIDR         *string
-	InternetGateway  bool
-	Labels           map[string]string
-	Subnets          []Subnet
-	FirewallRules    []FirewallRule
-	CreatedAt        interface{}
-	UpdatedAt        interface{}
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	OrganizationID  string          `json:"organization_id"`
+	VpcID           *string         `json:"vpc_id,omitempty"`
+	Type            NetworkType     `json:"type"`
+	CIDR            string          `json:"cidr"`
+	IPv6CIDR        *string         `json:"ipv6_cidr,omitempty"`
+	InternetGateway bool            `json:"internet_gateway"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	Subnets         []Subnet        `json:"subnets,omitempty"`
+	FirewallRules   []FirewallRule  `json:"firewall_rules,omitempty"`
+	CreatedAt       interface{}     `json:"created_at"`
+	UpdatedAt       interface{}     `json:"updated_at"`
 }
 
 type Subnet struct {
-	ID          string
-	Name        string
-	NetworkID   string
-	CIDR        string
-	IPv6CIDR    *string
-	DHCPEnabled bool
-	GatewayIP   *string
-	CreatedAt   interface{}
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	NetworkID   string      `json:"network_id"`
+	CIDR        string      `json:"cidr"`
+	IPv6CIDR    *string     `json:"ipv6_cidr,omitempty"`
+	DHCPEnabled bool        `json:"dhcp_enabled"`
+	GatewayIP   *string     `json:"gateway_ip,omitempty"`
+	CreatedAt   interface{} `json:"created_at"`
 }
 
 type FirewallRule struct {
-	ID              string
-	Name            string
-	NetworkID       string
-	Priority        int32
-	Action          string
-	Direction       string
-	SourceCIDRs     []string
-	DestinationCIDRs []string
-	Protocol        string
-	PortMin         *int32
-	PortMax         *int32
-	Enabled         bool
-	CreatedAt       interface{}
+	ID               string      `json:"id"`
+	Name             string      `json:"name"`
+	NetworkID        string      `json:"network_id"`
+	Priority         int32       `json:"priority"`
+	Action           string      `json:"action"`
+	Direction        string      `json:"direction"`
+	SourceCIDRs      []string    `json:"source_cidrs,omitempty"`
+	DestinationCIDRs []string    `json:"destination_cidrs,omitempty"`
+	Protocol         string      `json:"protocol"`
+	PortMin          *int32      `json:"port_min,omitempty"`
+	PortMax          *int32      `json:"port_max,omitempty"`
+	Enabled          bool        `json:"enabled"`
+	CreatedAt        interface{} `json:"created_at"`
 }
 
 type FloatingIP struct {
-	ID            string
-	IPAddress     string
-	NetworkID     *string
-	VMID          *string
-	OrganizationID string
-	CreatedAt     interface{}
+	ID             string      `json:"id"`
+	IPAddress      string      `json:"ip_address"`
+	NetworkID      *string     `json:"network_id,omitempty"`
+	VMID           *string     `json:"vm_id,omitempty"`
+	OrganizationID string      `json:"organization_id"`
+	CreatedAt      interface{} `json:"created_at"`
 }
 
 type NetworkRepository interface {
@@ -71,9 +71,9 @@ type NetworkRepository interface {
 }
 
 type NetworkFilter struct {
-	OrganizationID string
-	Page           int
-	PerPage        int
+	OrganizationID string `json:"organization_id"`
+	Page           int    `json:"page"`
+	PerPage        int    `json:"per_page"`
 }
 
 type FirewallRepository interface {
@@ -108,25 +108,26 @@ type NetworkService interface {
 	DeleteFirewallRule(ctx context.Context, id string) error
 	AllocateFloatingIP(ctx context.Context, networkID, vmID string) (*FloatingIP, error)
 	ReleaseFloatingIP(ctx context.Context, id string) error
+	ListFloatingIPs(ctx context.Context) ([]*FloatingIP, error)
 }
 
 type CreateNetworkRequest struct {
-	Name            string
-	OrganizationID  string
-	CIDR            string
-	IPv6CIDR        string
-	InternetGateway bool
+	Name            string `json:"name"`
+	OrganizationID  string `json:"organization_id"`
+	CIDR            string `json:"cidr"`
+	IPv6CIDR        string `json:"ipv6_cidr"`
+	InternetGateway bool   `json:"internet_gateway"`
 }
 
 type CreateFirewallRuleRequest struct {
-	NetworkID        string
-	Name             string
-	Priority         int32
-	Action           string
-	Direction        string
-	SourceCIDRs      []string
-	DestinationCIDRs []string
-	Protocol         string
-	PortMin          *int32
-	PortMax          *int32
+	NetworkID        string   `json:"network_id"`
+	Name             string   `json:"name"`
+	Priority         int32    `json:"priority"`
+	Action           string   `json:"action"`
+	Direction        string   `json:"direction"`
+	SourceCIDRs      []string `json:"source_cidrs,omitempty"`
+	DestinationCIDRs []string `json:"destination_cidrs,omitempty"`
+	Protocol         string   `json:"protocol"`
+	PortMin          *int32   `json:"port_min,omitempty"`
+	PortMax          *int32   `json:"port_max,omitempty"`
 }

@@ -399,8 +399,8 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Name == "" || req.OrganizationID == "" {
-		writeError(w, http.StatusBadRequest, "name and organization_id are required")
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
 
@@ -435,10 +435,6 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	orgID := r.URL.Query().Get("organization_id")
-	if orgID == "" {
-		writeError(w, http.StatusBadRequest, "organization_id is required")
-		return
-	}
 
 	keys, err := h.svc.ListAPIKeys(r.Context(), orgID)
 	if err != nil {

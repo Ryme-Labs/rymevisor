@@ -26,10 +26,9 @@ RYMEVISOR_GROUP="rymevisor"
 # Default ports
 PORT_API_GATEWAY=8080
 PORT_CONTROL_PLANE=8081
-PORT_AUTH_SERVICE=8082
-PORT_SCHEDULER=8083
-PORT_NETWORKING=8084
-PORT_STORAGE=8085
+PORT_SCHEDULER=8085
+PORT_NETWORKING=8083
+PORT_STORAGE=8084
 
 # Database
 DB_NAME="rymevisor"
@@ -323,8 +322,8 @@ start_infra() {
   log_step "Starting infrastructure containers..."
 
   # Check if containers already exist
-  local PG_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevisor-postgres$' || true)
-  local RED_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevisor-redis$' || true)
+  local PG_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevalor-postgres$' || true)
+  local RED_EXISTS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -c '^rymevalor-redis$' || true)
 
   # Find available ports
   local PG_PORT=$DB_PORT
@@ -532,14 +531,11 @@ install_binaries() {
 generate_config() {
   log_step "Generating configuration..."
 
-  # Ensure we have a password
-  if [ -z "$DB_PASS" ]; then
-    DB_PASS=$(generate_password)
-    log_warn "No database password set, generated new one"
+  # Ensure we have an API key
+  if [ -z "$API_KEY" ]; then
+    API_KEY=$(generate_password)
+    log_warn "No API key set, generated new one"
   fi
-
-  local JWT_SECRET
-  JWT_SECRET=$(generate_password)
 
   cat > "${RYMEVISOR_CONFIG}/config.env" << EOF
 # RymeVisor Configuration
@@ -560,10 +556,8 @@ RYMEVISOR_REDIS_PASSWORD=${REDIS_PASS}
 # NATS
 RYMEVISOR_NATS_URL=nats://${NATS_HOST}:${NATS_PORT}
 
-# Auth
-RYMEVISOR_JWT_SECRET=${JWT_SECRET}
-RYMEVISOR_JWT_EXPIRY=1h
-RYMEVISOR_REFRESH_TOKEN_EXPIRY=168h
+# API Key
+RYMEVISOR_API_KEY=${API_KEY}
 
 # Storage
 RYMEVISOR_IMAGES_PATH=${RYMEVISOR_HOME}/images
@@ -580,6 +574,13 @@ RYMEVISOR_NODE_HEARTBEAT=10s
 # Monitoring
 RYMEVISOR_PROMETHEUS_ENABLED=true
 RYMEVISOR_METRICS_PATH=/metrics
+
+# Downstream service URLs (for API gateway proxy)
+RYMEVISOR_CONTROL_PLANE_URL=localhost:${PORT_CONTROL_PLANE}
+RYMEVISOR_AUTH_URL=localhost:${PORT_AUTH_SERVICE}
+RYMEVISOR_NETWORK_URL=localhost:${PORT_NETWORKING}
+RYMEVISOR_STORAGE_URL=localhost:${PORT_STORAGE}
+RYMEVISOR_SCHEDULER_URL=localhost:${PORT_SCHEDULER}
 EOF
 
   chmod 600 "${RYMEVISOR_CONFIG}/config.env"
@@ -594,11 +595,11 @@ EOF
 
   # Show credentials to user
   echo ""
-  log_secret "=== Generated Credentials ==="
-  log_secret "Database URL: postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
-  log_secret "JWT Secret:   ${JWT_SECRET}"
+  log_secret "=== API Key ==="
+  log_secret "API Key: ${API_KEY}"
   log_secret ""
-  log_secret "Save these! They are also in ${RYMEVISOR_CONFIG}/config.env"
+  log_secret "Use this key in the X-API-Key header for all requests"
+  log_secret "Saved in ${RYMEVISOR_CONFIG}/config.env"
   echo ""
 }
 
@@ -621,7 +622,6 @@ create_services() {
 
   local SERVICES=(
     "control-plane:${PORT_CONTROL_PLANE}"
-    "auth-service:${PORT_AUTH_SERVICE}"
     "scheduler:${PORT_SCHEDULER}"
     "networking-engine:${PORT_NETWORKING}"
     "storage-manager:${PORT_STORAGE}"
@@ -634,6 +634,11 @@ create_services() {
     local port="${entry##*:}"
     local binary="${RYMEVISOR_BIN}/rymevisor-${name}"
 
+    local extra_env=""
+    if [ "$port" != "0" ]; then
+      extra_env="Environment=RYMEVISOR_SERVER_ADDR=:${port}"
+    fi
+
     cat > "/etc/systemd/system/rymevisor-${name}.service" << EOF
 [Unit]
 Description=RymeVisor ${name}
@@ -645,6 +650,7 @@ Type=simple
 User=${RYMEVISOR_USER}
 Group=${RYMEVISOR_GROUP}
 EnvironmentFile=${RYMEVISOR_CONFIG}/config.env
+${extra_env}
 ExecStart=${binary}
 Restart=always
 RestartSec=5
@@ -923,12 +929,11 @@ do_install() {
   # Start RymeVisor services
   log_step "Starting RymeVisor services..."
   local SVCS=(
-    "rymevisor-auth-service"
+    "rymevisor-api-gateway"
     "rymevisor-control-plane"
     "rymevisor-scheduler"
     "rymevisor-networking-engine"
     "rymevisor-storage-manager"
-    "rymevisor-api-gateway"
     "rymevisor-node-agent"
   )
 
@@ -1036,7 +1041,7 @@ do_uninstall() {
 
   # Stop services
   local SERVICES=(
-    "api-gateway" "control-plane" "auth-service"
+    "api-gateway" "control-plane"
     "scheduler" "networking-engine" "storage-manager" "node-agent"
   )
   for svc in "${SERVICES[@]}"; do

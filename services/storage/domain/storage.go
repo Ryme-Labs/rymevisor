@@ -25,39 +25,39 @@ const (
 )
 
 type StoragePool struct {
-	ID        string
-	Name      string
-	Driver    StorageDriver
-	Path      string
-	TotalBytes int64
-	UsedBytes  int64
-	Encrypted bool
-	Config    map[string]string
-	CreatedAt interface{}
-	UpdatedAt interface{}
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Driver     StorageDriver     `json:"driver"`
+	Path       string            `json:"path"`
+	TotalBytes int64             `json:"total_bytes"`
+	UsedBytes  int64             `json:"used_bytes"`
+	Encrypted  bool              `json:"encrypted"`
+	Config     map[string]string `json:"config,omitempty"`
+	CreatedAt  interface{}       `json:"created_at"`
+	UpdatedAt  interface{}       `json:"updated_at"`
 }
 
 type Volume struct {
-	ID        string
-	Name      string
-	PoolID    string
-	SizeBytes int64
-	UsedBytes int64
-	Status    VolumeStatus
-	Encrypted bool
-	Labels    map[string]string
-	Snapshots []VolumeSnapshot
-	CreatedAt interface{}
-	UpdatedAt interface{}
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	PoolID    string            `json:"pool_id"`
+	SizeBytes int64             `json:"size_bytes"`
+	UsedBytes int64             `json:"used_bytes"`
+	Status    VolumeStatus      `json:"status"`
+	Encrypted bool              `json:"encrypted"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	Snapshots []VolumeSnapshot  `json:"snapshots,omitempty"`
+	CreatedAt interface{}       `json:"created_at"`
+	UpdatedAt interface{}       `json:"updated_at"`
 }
 
 type VolumeSnapshot struct {
-	ID        string
-	VolumeID  string
-	Name      string
-	SizeBytes int64
-	Status    string
-	CreatedAt interface{}
+	ID        string      `json:"id"`
+	VolumeID  string      `json:"volume_id"`
+	Name      string      `json:"name"`
+	SizeBytes int64       `json:"size_bytes"`
+	Status    string      `json:"status"`
+	CreatedAt interface{} `json:"created_at"`
 }
 
 type StoragePoolRepository interface {
@@ -75,9 +75,9 @@ type VolumeRepository interface {
 }
 
 type VolumeFilter struct {
-	PoolID  string
-	Page    int
-	PerPage int
+	PoolID  string `json:"pool_id"`
+	Page    int    `json:"page"`
+	PerPage int    `json:"per_page"`
 }
 
 type SnapshotRepository interface {
@@ -103,17 +103,17 @@ type StorageService interface {
 }
 
 type CreatePoolRequest struct {
-	Name      string
-	Driver    StorageDriver
-	Path      string
-	Encrypted bool
-	Config    map[string]string
+	Name      string            `json:"name"`
+	Driver    StorageDriver     `json:"driver"`
+	Path      string            `json:"path"`
+	Encrypted bool              `json:"encrypted"`
+	Config    map[string]string `json:"config,omitempty"`
 }
 
 type CreateVolumeRequest struct {
-	Name      string
-	PoolID    string
-	SizeBytes int64
-	Encrypted bool
-	Labels    map[string]string
+	Name      string            `json:"name"`
+	PoolID    string            `json:"pool_id"`
+	SizeBytes int64             `json:"size_bytes"`
+	Encrypted bool              `json:"encrypted"`
+	Labels    map[string]string `json:"labels,omitempty"`
 }

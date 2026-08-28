@@ -560,3 +560,135 @@ func (ns *NodeServiceImpl) Drain(ctx context.Context, id string, timeout int32) 
 func (ns *NodeServiceImpl) Heartbeat(ctx context.Context, nodeID string, resources domain.NodeResources) error {
 	return ns.repo.UpdateHeartbeat(ctx, nodeID, resources)
 }
+
+func (s *Service) ListImages(ctx context.Context, filter domain.ImageFilter) ([]*domain.Image, int, error) {
+	return s.imageRepo.List(ctx, filter)
+}
+
+func (s *Service) GetImage(ctx context.Context, id string) (*domain.Image, error) {
+	return s.imageRepo.GetByID(ctx, id)
+}
+
+func (s *Service) CreateImage(ctx context.Context, img *domain.Image) error {
+	if img.Name == "" {
+		return fmt.Errorf("image name is required")
+	}
+	if img.OS == "" {
+		return fmt.Errorf("os is required")
+	}
+	if img.Architecture == "" {
+		return fmt.Errorf("architecture is required")
+	}
+
+	img.ID = uuid.New().String()
+	img.Status = domain.ImageStatusDownloading
+
+	if err := s.imageRepo.Create(ctx, img); err != nil {
+		return fmt.Errorf("create image: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) DeleteImage(ctx context.Context, id string) error {
+	img, err := s.imageRepo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get image: %w", err)
+	}
+	if img == nil {
+		return fmt.Errorf("image not found")
+	}
+
+	if err := s.imageRepo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete image: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) ListBackups(ctx context.Context, filter domain.BackupFilter) ([]*domain.Backup, int, error) {
+	return s.backupRepo.List(ctx, filter)
+}
+
+func (s *Service) GetBackup(ctx context.Context, id string) (*domain.Backup, error) {
+	return s.backupRepo.GetByID(ctx, id)
+}
+
+func (s *Service) CreateBackup(ctx context.Context, backup *domain.Backup) error {
+	if backup.VMID == "" {
+		return fmt.Errorf("vm_id is required")
+	}
+	if backup.Name == "" {
+		return fmt.Errorf("backup name is required")
+	}
+
+	vm, err := s.vmRepo.GetByID(ctx, backup.VMID)
+	if err != nil {
+		return fmt.Errorf("get vm: %w", err)
+	}
+	if vm == nil {
+		return fmt.Errorf("vm not found")
+	}
+
+	backup.ID = uuid.New().String()
+	backup.OrganizationID = vm.OrganizationID
+	backup.Status = domain.BackupStatusCreating
+
+	if err := s.backupRepo.Create(ctx, backup); err != nil {
+		return fmt.Errorf("create backup: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) DeleteBackup(ctx context.Context, id string) error {
+	b, err := s.backupRepo.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get backup: %w", err)
+	}
+	if b == nil {
+		return fmt.Errorf("backup not found")
+	}
+
+	if err := s.backupRepo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete backup: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) RestoreBackup(ctx context.Context, backupID, vmID string) error {
+	b, err := s.backupRepo.GetByID(ctx, backupID)
+	if err != nil {
+		return fmt.Errorf("get backup: %w", err)
+	}
+	if b == nil {
+		return fmt.Errorf("backup not found")
+	}
+
+	vm, err := s.vmRepo.GetByID(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("get vm: %w", err)
+	}
+	if vm == nil {
+		return fmt.Errorf("vm not found")
+	}
+
+	if err := s.vmRepo.UpdateStatus(ctx, vmID, domain.VMStatusStopped); err != nil {
+		return fmt.Errorf("stop vm: %w", err)
+	}
+
+	eventData, _ := json.Marshal(map[string]string{
+		"vm_id":      vmID,
+		"backup_id":  backupID,
+	})
+	if s.publisher != nil {
+		_ = s.publisher.PublishVMEvent(ctx, "restoring_backup", vmID, eventData)
+	}
+
+	if err := s.vmRepo.UpdateStatus(ctx, vmID, domain.VMStatusRunning); err != nil {
+		return fmt.Errorf("restart vm: %w", err)
+	}
+
+	return nil
+}

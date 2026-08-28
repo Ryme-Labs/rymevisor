@@ -3,10 +3,11 @@ package middleware
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -16,11 +17,8 @@ import (
 type contextKey string
 
 const (
-	requestIDKey   contextKey = "request_id"
-	UserIDKey      contextKey = "user_id"
-	OrgIDKey       contextKey = "org_id"
-	APIKeyIDKey    contextKey = "api_key_id"
-	PermissionKey  contextKey = "permission"
+	requestIDKey  contextKey = "request_id"
+	APIKeyIDKey   contextKey = "api_key_id"
 )
 
 func RequestID(next http.Handler) http.Handler {
@@ -48,7 +46,7 @@ func CORS() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-API-Key, X-Request-ID")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 
 			if r.Method == http.MethodOptions {
@@ -102,38 +100,30 @@ func ContentType(next http.Handler) http.Handler {
 	})
 }
 
-func StripAPIKeyPrefix(next http.Handler) http.Handler {
+func RequireAPIKey(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if strings.HasPrefix(auth, "Bearer rvk_") {
-			r.Header.Set("X-API-Key", strings.TrimPrefix(auth, "Bearer "))
-			r.Header.Del("Authorization")
+		validKey := os.Getenv("RYMEVISOR_API_KEY")
+		if validKey == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"API key not configured on server"}`))
+			return
 		}
+
+		provided := r.Header.Get("X-API-Key")
+		if provided == "" {
+			provided = r.URL.Query().Get("api_key")
+		}
+
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(validKey)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid or missing API key"}`))
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
-}
-
-func SetContextValue(key contextKey, value interface{}) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := context.WithValue(r.Context(), key, value)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
-}
-
-func GetUserID(ctx context.Context) string {
-	if v, ok := ctx.Value(UserIDKey).(string); ok {
-		return v
-	}
-	return ""
-}
-
-func GetOrgID(ctx context.Context) string {
-	if v, ok := ctx.Value(OrgIDKey).(string); ok {
-		return v
-	}
-	return ""
 }
 
 func GetAPIKeyID(ctx context.Context) string {

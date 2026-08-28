@@ -153,7 +153,7 @@ func (r *VolumeRepository) listSnapshots(ctx context.Context, volumeID string) (
 func (r *VolumeRepository) List(ctx context.Context, filter domain.VolumeFilter) ([]*domain.Volume, int, error) {
 	var total int
 	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM volumes WHERE pool_id = $1`, filter.PoolID,
+		`SELECT COUNT(*) FROM volumes`,
 	).Scan(&total)
 	if err != nil {
 		return nil, 0, err
@@ -162,9 +162,9 @@ func (r *VolumeRepository) List(ctx context.Context, filter domain.VolumeFilter)
 	offset := (filter.Page - 1) * filter.PerPage
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, name, pool_id, size_bytes, used_bytes, status, encrypted, labels, created_at, updated_at
-		 FROM volumes WHERE pool_id = $1
-		 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
-		filter.PoolID, filter.PerPage, offset,
+		 FROM volumes
+		 ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+		filter.PerPage, offset,
 	)
 	if err != nil {
 		return nil, 0, err

@@ -5,19 +5,19 @@ import (
 )
 
 type SchedulingConstraints struct {
-	PreferredNode  string
-	RequiredLabels []string
-	PreferredLabels []string
-	AvoidLabels    []string
-	RequireGPU     bool
-	AvailabilityZone string
+	PreferredNode    string   `json:"preferred_node"`
+	RequiredLabels   []string `json:"required_labels,omitempty"`
+	PreferredLabels  []string `json:"preferred_labels,omitempty"`
+	AvoidLabels      []string `json:"avoid_labels,omitempty"`
+	RequireGPU       bool     `json:"require_gpu"`
+	AvailabilityZone string   `json:"availability_zone"`
 }
 
 type ScheduledJob struct {
-	VMID        string
-	NodeID      string
-	Priority    int32
-	Constraints *SchedulingConstraints
+	VMID        string                 `json:"vm_id"`
+	NodeID      string                 `json:"node_id"`
+	Priority    int32                  `json:"priority"`
+	Constraints *SchedulingConstraints `json:"constraints,omitempty"`
 }
 
 type SchedulerService interface {

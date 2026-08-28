@@ -68,7 +68,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *domain.VirtualMachine) er
 	for _, nic := range vm.NetworkInterfaces {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO vm_network_interfaces (id, vm_id, name, network_id, mac_address, ipv4_addresses, ipv6_addresses, is_primary)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8)
 		`,
 			nic.ID, vm.ID, nic.Name, nic.NetworkID, nic.MACAddress, nic.IPv4Addresses, nic.IPv6Addresses, nic.IsPrimary,
 		)
@@ -264,8 +264,12 @@ func (r *VMRepository) loadRelated(ctx context.Context, vm *domain.VirtualMachin
 
 	for nicRows.Next() {
 		var n domain.NetworkInterface
-		if err := nicRows.Scan(&n.ID, &n.Name, &n.NetworkID, &n.MACAddress, &n.IPv4Addresses, &n.IPv6Addresses, &n.IsPrimary); err != nil {
+		var networkID *string
+		if err := nicRows.Scan(&n.ID, &n.Name, &networkID, &n.MACAddress, &n.IPv4Addresses, &n.IPv6Addresses, &n.IsPrimary); err != nil {
 			return fmt.Errorf("vm_repo: scan nic: %w", err)
+		}
+		if networkID != nil {
+			n.NetworkID = *networkID
 		}
 		vm.NetworkInterfaces = append(vm.NetworkInterfaces, n)
 	}

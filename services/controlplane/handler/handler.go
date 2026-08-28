@@ -49,6 +49,21 @@ func (h *Handler) Routes() chi.Router {
 		r.Post("/{id}/heartbeat", h.Heartbeat)
 	})
 
+	r.Route("/images", func(r chi.Router) {
+		r.Post("/", h.CreateImage)
+		r.Get("/", h.ListImages)
+		r.Get("/{id}", h.GetImage)
+		r.Delete("/{id}", h.DeleteImage)
+	})
+
+	r.Route("/backups", func(r chi.Router) {
+		r.Post("/", h.CreateBackup)
+		r.Get("/", h.ListBackups)
+		r.Get("/{id}", h.GetBackup)
+		r.Delete("/{id}", h.DeleteBackup)
+		r.Post("/{id}/restore", h.RestoreBackup)
+	})
+
 	return r
 }
 
@@ -372,6 +387,195 @@ func (h *Handler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) CreateImage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name         string            `json:"name"`
+		Description  string            `json:"description"`
+		OS           string            `json:"os"`
+		OSVersion    string            `json:"os_version"`
+		Architecture string            `json:"architecture"`
+		Type         domain.ImageType  `json:"type"`
+		SizeBytes    int64             `json:"size_bytes"`
+		Checksum     string            `json:"checksum"`
+		Tags         []string          `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	img := &domain.Image{
+		Name:         req.Name,
+		Description:  req.Description,
+		OS:           req.OS,
+		OSVersion:    req.OSVersion,
+		Architecture: req.Architecture,
+		Type:         req.Type,
+		SizeBytes:    req.SizeBytes,
+		Checksum:     req.Checksum,
+		Tags:         req.Tags,
+	}
+
+	if err := h.svc.CreateImage(r.Context(), img); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, img)
+}
+
+func (h *Handler) GetImage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	img, err := h.svc.GetImage(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if img == nil {
+		writeError(w, http.StatusNotFound, "image not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, img)
+}
+
+func (h *Handler) ListImages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+
+	filter := domain.ImageFilter{
+		OS:           q.Get("os"),
+		Architecture: q.Get("architecture"),
+		Type:         q.Get("type"),
+		Search:       q.Get("search"),
+		Page:         page,
+		PerPage:      perPage,
+	}
+
+	images, total, err := h.svc.ListImages(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": images,
+		"total": total,
+	})
+}
+
+func (h *Handler) DeleteImage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if err := h.svc.DeleteImage(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) CreateBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		VMID        string              `json:"vm_id"`
+		Name        string              `json:"name"`
+		Type        domain.BackupType   `json:"type"`
+		StoragePool string              `json:"storage_pool"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	backup := &domain.Backup{
+		VMID:        req.VMID,
+		Name:        req.Name,
+		Type:        req.Type,
+		StoragePool: req.StoragePool,
+	}
+
+	if err := h.svc.CreateBackup(r.Context(), backup); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, backup)
+}
+
+func (h *Handler) GetBackup(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	backup, err := h.svc.GetBackup(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if backup == nil {
+		writeError(w, http.StatusNotFound, "backup not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, backup)
+}
+
+func (h *Handler) ListBackups(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	perPage, _ := strconv.Atoi(q.Get("per_page"))
+
+	filter := domain.BackupFilter{
+		VMID:           q.Get("vm_id"),
+		OrganizationID: q.Get("organization_id"),
+		Page:           page,
+		PerPage:        perPage,
+	}
+
+	backups, total, err := h.svc.ListBackups(r.Context(), filter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": backups,
+		"total": total,
+	})
+}
+
+func (h *Handler) DeleteBackup(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if err := h.svc.DeleteBackup(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req struct {
+		VMID string `json:"vm_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if err := h.svc.RestoreBackup(r.Context(), id, req.VMID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

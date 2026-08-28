@@ -20,14 +20,15 @@ func NewSessionRepository(pool *pgxpool.Pool) *SessionRepository {
 func (r *SessionRepository) Create(ctx context.Context, session *domain.Session) error {
 	query := `
 		INSERT INTO sessions (user_id, token_hash, ip_address, user_agent, expires_at)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, NULLIF($3, '')::inet, NULLIF($4, ''), $5)
 		RETURNING id, user_id, token_hash, ip_address, user_agent, expires_at, created_at`
 
+	var ipAddress, userAgent *string
 	return r.pool.QueryRow(ctx, query,
 		session.UserID, session.TokenHash, session.IPAddress, session.UserAgent, session.ExpiresAt,
 	).Scan(
-		&session.ID, &session.UserID, &session.TokenHash, &session.IPAddress,
-		&session.UserAgent, &session.ExpiresAt, &session.CreatedAt,
+		&session.ID, &session.UserID, &session.TokenHash, &ipAddress,
+		&userAgent, &session.ExpiresAt, &session.CreatedAt,
 	)
 }
 

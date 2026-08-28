@@ -34,9 +34,6 @@ func (s *Service) CreateNetwork(ctx context.Context, req *domain.CreateNetworkRe
 	if req.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	if req.OrganizationID == "" {
-		return nil, fmt.Errorf("organization_id is required")
-	}
 	if req.CIDR == "" {
 		return nil, fmt.Errorf("cidr is required")
 	}
@@ -284,4 +281,8 @@ func (s *Service) AllocateFloatingIP(ctx context.Context, networkID, vmID string
 
 func (s *Service) ReleaseFloatingIP(ctx context.Context, id string) error {
 	return s.floatingIPRepo.Release(ctx, id)
+}
+
+func (s *Service) ListFloatingIPs(ctx context.Context) ([]*domain.FloatingIP, error) {
+	return s.floatingIPRepo.List(ctx, "")
 }

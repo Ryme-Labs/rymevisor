@@ -23,19 +23,19 @@ const (
 )
 
 type Image struct {
-	ID           string
-	Name         string
-	Description  string
-	OS           string
-	OSVersion    string
-	Architecture string
-	Type         ImageType
-	SizeBytes    int64
-	Status       ImageStatus
-	Checksum     string
-	Tags         []string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID           string      `json:"id"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	OS           string      `json:"os"`
+	OSVersion    string      `json:"os_version"`
+	Architecture string      `json:"architecture"`
+	Type         ImageType   `json:"type"`
+	SizeBytes    int64       `json:"size_bytes"`
+	Status       ImageStatus `json:"status"`
+	Checksum     string      `json:"checksum"`
+	Tags         []string    `json:"tags,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 type ImageRepository interface {
@@ -46,12 +46,12 @@ type ImageRepository interface {
 }
 
 type ImageFilter struct {
-	OS           string
-	Architecture string
-	Type         string
-	Search       string
-	Page         int
-	PerPage      int
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Type         string `json:"type"`
+	Search       string `json:"search"`
+	Page         int    `json:"page"`
+	PerPage      int    `json:"per_page"`
 }
 
 type ImageService interface {
@@ -63,21 +63,21 @@ type ImageService interface {
 }
 
 type UploadImageRequest struct {
-	Name         string
-	Description  string
-	OS           string
-	OSVersion    string
-	Architecture string
-	Type         ImageType
-	Tags         []string
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	OS           string    `json:"os"`
+	OSVersion    string    `json:"os_version"`
+	Architecture string    `json:"architecture"`
+	Type         ImageType `json:"type"`
+	Tags         []string  `json:"tags,omitempty"`
 }
 
 type ImportImageRequest struct {
-	URL          string
-	Name         string
-	OS           string
-	OSVersion    string
-	Architecture string
+	URL          string `json:"url"`
+	Name         string `json:"name"`
+	OS           string `json:"os"`
+	OSVersion    string `json:"os_version"`
+	Architecture string `json:"architecture"`
 }
 
 type BackupStatus string
@@ -98,16 +98,16 @@ const (
 )
 
 type Backup struct {
-	ID             string
-	Name           string
-	VMID           string
-	OrganizationID string
-	Status         BackupStatus
-	SizeBytes      int64
-	Type           BackupType
-	StoragePool    string
-	CreatedAt      time.Time
-	CompletedAt    *time.Time
+	ID             string       `json:"id"`
+	Name           string       `json:"name"`
+	VMID           string       `json:"vm_id"`
+	OrganizationID string       `json:"organization_id"`
+	Status         BackupStatus `json:"status"`
+	SizeBytes      int64        `json:"size_bytes"`
+	Type           BackupType   `json:"type"`
+	StoragePool    string       `json:"storage_pool"`
+	CreatedAt      time.Time    `json:"created_at"`
+	CompletedAt    *time.Time   `json:"completed_at,omitempty"`
 }
 
 type BackupRepository interface {
@@ -119,10 +119,10 @@ type BackupRepository interface {
 }
 
 type BackupFilter struct {
-	VMID           string
-	OrganizationID string
-	Page           int
-	PerPage        int
+	VMID           string `json:"vm_id"`
+	OrganizationID string `json:"organization_id"`
+	Page           int    `json:"page"`
+	PerPage        int    `json:"per_page"`
 }
 
 type BackupService interface {

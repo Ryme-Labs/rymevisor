@@ -16,24 +16,24 @@ const (
 )
 
 type Node struct {
-	ID              string
-	Name            string
-	Address         string
-	Port            int32
-	Status          NodeStatus
-	TotalCPUs       int32
-	UsedCPUs        int32
-	TotalMemoryMB   int64
-	UsedMemoryMB    int64
-	TotalStorageBytes int64
-	UsedStorageBytes int64
-	TotalGPUs       int32
-	UsedGPUs        int32
-	Labels          map[string]string
-	Metadata        map[string]string
-	LastHeartbeat   *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Address           string            `json:"address"`
+	Port              int32             `json:"port"`
+	Status            NodeStatus        `json:"status"`
+	TotalCPUs         int32             `json:"total_cpus"`
+	UsedCPUs          int32             `json:"used_cpus"`
+	TotalMemoryMB     int64             `json:"total_memory_mb"`
+	UsedMemoryMB      int64             `json:"used_memory_mb"`
+	TotalStorageBytes int64             `json:"total_storage_bytes"`
+	UsedStorageBytes  int64             `json:"used_storage_bytes"`
+	TotalGPUs         int32             `json:"total_gpus"`
+	UsedGPUs          int32             `json:"used_gpus"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
+	LastHeartbeat     *time.Time        `json:"last_heartbeat,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
 type NodeRepository interface {
@@ -48,21 +48,21 @@ type NodeRepository interface {
 }
 
 type NodeFilter struct {
-	Status string
-	Search string
-	Page   int
-	PerPage int
+	Status  string `json:"status"`
+	Search  string `json:"search"`
+	Page    int    `json:"page"`
+	PerPage int    `json:"per_page"`
 }
 
 type NodeResources struct {
-	TotalCPUs       int32
-	UsedCPUs        int32
-	TotalMemoryMB   int64
-	UsedMemoryMB    int64
-	TotalStorageBytes int64
-	UsedStorageBytes int64
-	TotalGPUs       int32
-	UsedGPUs        int32
+	TotalCPUs         int32 `json:"total_cpus"`
+	UsedCPUs          int32 `json:"used_cpus"`
+	TotalMemoryMB     int64 `json:"total_memory_mb"`
+	UsedMemoryMB      int64 `json:"used_memory_mb"`
+	TotalStorageBytes int64 `json:"total_storage_bytes"`
+	UsedStorageBytes  int64 `json:"used_storage_bytes"`
+	TotalGPUs         int32 `json:"total_gpus"`
+	UsedGPUs          int32 `json:"used_gpus"`
 }
 
 type NodeService interface {
@@ -75,9 +75,9 @@ type NodeService interface {
 }
 
 type RegisterNodeRequest struct {
-	Name      string
-	Address   string
-	Port      int32
-	Labels    map[string]string
-	Resources NodeResources
+	Name      string            `json:"name"`
+	Address   string            `json:"address"`
+	Port      int32             `json:"port"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	Resources NodeResources     `json:"resources"`
 }

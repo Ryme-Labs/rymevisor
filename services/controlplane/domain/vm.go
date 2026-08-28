@@ -23,58 +23,58 @@ const (
 )
 
 type VirtualMachine struct {
-	ID                 string
-	Name               string
-	NodeID             *string
-	OrganizationID     string
-	ProjectID          *string
-	Status             VMStatus
-	VCpus              int32
-	MemoryMB           int64
-	CPUModel           string
-	MachineType        string
-	EnableSecureBoot   bool
-	EnableTPM          bool
-	Hugepages          bool
-	CloudInit          string
-	SSHKeyID           *string
-	Tags               []string
-	Metadata           map[string]string
-	Labels             map[string]string
-	Disks              []Disk
-	NetworkInterfaces  []NetworkInterface
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                 string             `json:"id"`
+	Name               string             `json:"name"`
+	NodeID             *string            `json:"node_id,omitempty"`
+	OrganizationID     string             `json:"organization_id"`
+	ProjectID          *string            `json:"project_id,omitempty"`
+	Status             VMStatus           `json:"status"`
+	VCpus              int32              `json:"vcpus"`
+	MemoryMB           int64              `json:"memory_mb"`
+	CPUModel           string             `json:"cpu_model"`
+	MachineType        string             `json:"machine_type"`
+	EnableSecureBoot   bool               `json:"enable_secure_boot"`
+	EnableTPM          bool               `json:"enable_tpm"`
+	Hugepages          bool               `json:"hugepages"`
+	CloudInit          string             `json:"cloud_init"`
+	SSHKeyID           *string            `json:"ssh_key_id,omitempty"`
+	Tags               []string           `json:"tags,omitempty"`
+	Metadata           map[string]string  `json:"metadata,omitempty"`
+	Labels             map[string]string  `json:"labels,omitempty"`
+	Disks              []Disk             `json:"disks,omitempty"`
+	NetworkInterfaces  []NetworkInterface `json:"network_interfaces,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
 }
 
 type Disk struct {
-	ID          string
-	Name        string
-	SizeBytes   int64
-	Type        string
-	StoragePool string
-	Boot        bool
-	Order       int32
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	SizeBytes   int64  `json:"size_bytes"`
+	Type        string `json:"type"`
+	StoragePool string `json:"storage_pool"`
+	Boot        bool   `json:"boot"`
+	Order       int32  `json:"order"`
 }
 
 type NetworkInterface struct {
-	ID            string
-	Name          string
-	NetworkID     string
-	MACAddress    string
-	IPv4Addresses []string
-	IPv6Addresses []string
-	IsPrimary     bool
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	NetworkID     string   `json:"network_id"`
+	MACAddress    string   `json:"mac_address"`
+	IPv4Addresses []string `json:"ipv4_addresses,omitempty"`
+	IPv6Addresses []string `json:"ipv6_addresses,omitempty"`
+	IsPrimary     bool     `json:"is_primary"`
 }
 
 type Snapshot struct {
-	ID          string
-	VMID        string
-	Name        string
-	Description string
-	SizeBytes   int64
-	Status      string
-	CreatedAt   time.Time
+	ID          string    `json:"id"`
+	VMID        string    `json:"vm_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	SizeBytes   int64     `json:"size_bytes"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type VMRepository interface {
@@ -121,40 +121,40 @@ type VMService interface {
 }
 
 type CreateVMRequest struct {
-	Name               string
-	NodeID             string
-	VCpus              int32
-	MemoryMB           int64
-	CPUModel           string
-	MachineType        string
-	EnableSecureBoot   bool
-	EnableTPM          bool
-	Hugepages          bool
-	CloudInit          string
-	Disks              []CreateDiskRequest
-	NetworkInterfaces  []CreateNetworkInterfaceRequest
-	Tags               []string
-	Metadata           map[string]string
-	Labels             map[string]string
+	Name               string                      `json:"name"`
+	NodeID             string                      `json:"node_id"`
+	VCpus              int32                       `json:"vcpus"`
+	MemoryMB           int64                       `json:"memory_mb"`
+	CPUModel           string                      `json:"cpu_model"`
+	MachineType        string                      `json:"machine_type"`
+	EnableSecureBoot   bool                        `json:"enable_secure_boot"`
+	EnableTPM          bool                        `json:"enable_tpm"`
+	Hugepages          bool                        `json:"hugepages"`
+	CloudInit          string                      `json:"cloud_init"`
+	Disks              []CreateDiskRequest         `json:"disks"`
+	NetworkInterfaces  []CreateNetworkInterfaceRequest `json:"network_interfaces"`
+	Tags               []string                    `json:"tags"`
+	Metadata           map[string]string           `json:"metadata"`
+	Labels             map[string]string           `json:"labels"`
 }
 
 type CreateDiskRequest struct {
-	Name        string
-	SizeBytes   int64
-	Type        string
-	StoragePool string
+	Name        string `json:"name"`
+	SizeBytes   int64  `json:"size_bytes"`
+	Type        string `json:"type"`
+	StoragePool string `json:"storage_pool"`
 }
 
 type CreateNetworkInterfaceRequest struct {
-	NetworkID string
-	IsPrimary bool
+	NetworkID string `json:"network_id"`
+	IsPrimary bool   `json:"is_primary"`
 }
 
 type UpdateVMRequest struct {
-	Name     string
-	Metadata map[string]string
-	Labels   map[string]string
-	Tags     []string
+	Name     string            `json:"name"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	Tags     []string          `json:"tags,omitempty"`
 }
 
 func NewVMID() string {

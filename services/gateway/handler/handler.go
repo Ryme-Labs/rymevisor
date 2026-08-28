@@ -11,7 +11,6 @@ import (
 
 type ServiceConfig struct {
 	ControlPlaneURL string
-	AuthURL         string
 	NetworkURL      string
 	StorageURL      string
 	SchedulerURL    string
@@ -32,26 +31,6 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Route("/auth", func(r chi.Router) {
-			r.Post("/login", g.proxy(cfg.AuthURL))
-			r.Post("/register", g.proxy(cfg.AuthURL))
-			r.Post("/refresh", g.proxy(cfg.AuthURL))
-			r.Get("/me", g.proxy(cfg.AuthURL))
-			r.Post("/change-password", g.proxy(cfg.AuthURL))
-			r.Route("/users", func(r chi.Router) {
-				r.Post("/", g.proxy(cfg.AuthURL))
-				r.Get("/", g.proxy(cfg.AuthURL))
-				r.Get("/{id}", g.proxy(cfg.AuthURL))
-				r.Put("/{id}", g.proxy(cfg.AuthURL))
-				r.Delete("/{id}", g.proxy(cfg.AuthURL))
-			})
-			r.Route("/api-keys", func(r chi.Router) {
-				r.Post("/", g.proxy(cfg.AuthURL))
-				r.Get("/", g.proxy(cfg.AuthURL))
-				r.Delete("/{id}", g.proxy(cfg.AuthURL))
-			})
-		})
-
 		r.Route("/vms", func(r chi.Router) {
 			r.Post("/", g.proxy(cfg.ControlPlaneURL))
 			r.Get("/", g.proxy(cfg.ControlPlaneURL))
@@ -64,12 +43,16 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 			r.Post("/{id}/resize", g.proxy(cfg.ControlPlaneURL))
 			r.Post("/{id}/snapshot", g.proxy(cfg.ControlPlaneURL))
 			r.Post("/{id}/clone", g.proxy(cfg.ControlPlaneURL))
+			r.Post("/{id}/restore-snapshot", g.proxy(cfg.ControlPlaneURL))
 		})
 
 		r.Route("/nodes", func(r chi.Router) {
+			r.Post("/", g.proxy(cfg.ControlPlaneURL))
 			r.Get("/", g.proxy(cfg.ControlPlaneURL))
 			r.Get("/{id}", g.proxy(cfg.ControlPlaneURL))
+			r.Put("/{id}", g.proxy(cfg.ControlPlaneURL))
 			r.Post("/{id}/drain", g.proxy(cfg.ControlPlaneURL))
+			r.Post("/{id}/heartbeat", g.proxy(cfg.ControlPlaneURL))
 		})
 
 		r.Route("/networks", func(r chi.Router) {

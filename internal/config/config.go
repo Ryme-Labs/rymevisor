@@ -13,7 +13,7 @@ type Config struct {
 	Database   DatabaseConfig   `yaml:"database"`
 	Redis      RedisConfig      `yaml:"redis"`
 	NATS       NATSConfig       `yaml:"nats"`
-	Auth       AuthConfig       `yaml:"auth"`
+	APIKey     string           `yaml:"-"`
 	Storage    StorageConfig    `yaml:"storage"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	Tracing    TracingConfig    `yaml:"tracing"`
@@ -46,15 +46,6 @@ type NATSConfig struct {
 	URL           string        `yaml:"url"`
 	MaxReconnects int           `yaml:"max_reconnects"`
 	ReconnectWait time.Duration `yaml:"reconnect_wait"`
-}
-
-type AuthConfig struct {
-	JWTSecret          string        `yaml:"-"`
-	JWTExpiry          time.Duration `yaml:"jwt_expiry"`
-	RefreshTokenExpiry time.Duration `yaml:"refresh_token_expiry"`
-	SessionCookieName  string        `yaml:"session_cookie_name"`
-	SessionSecure      bool          `yaml:"session_secure"`
-	BcryptCost         int           `yaml:"bcrypt_cost"`
 }
 
 type StorageConfig struct {
@@ -110,14 +101,7 @@ func Load() (*Config, error) {
 			MaxReconnects: envIntOrDefault("RYMEVISOR_NATS_MAX_RECONNECTS", -1),
 			ReconnectWait: envDurationOrDefault("RYMEVISOR_NATS_RECONNECT_WAIT", 2*time.Second),
 		},
-		Auth: AuthConfig{
-			JWTSecret:          envOrDefault("RYMEVISOR_JWT_SECRET", ""),
-			JWTExpiry:          envDurationOrDefault("RYMEVISOR_JWT_EXPIRY", 1*time.Hour),
-			RefreshTokenExpiry: envDurationOrDefault("RYMEVISOR_REFRESH_TOKEN_EXPIRY", 7*24*time.Hour),
-			SessionCookieName:  envOrDefault("RYMEVISOR_SESSION_COOKIE", "rymevisor_session"),
-			SessionSecure:      envBoolOrDefault("RYMEVISOR_SESSION_SECURE", false),
-			BcryptCost:         envIntOrDefault("RYMEVISOR_BCRYPT_COST", 12),
-		},
+		APIKey: envOrDefault("RYMEVISOR_API_KEY", ""),
 		Storage: StorageConfig{
 			ImagesPath:    envOrDefault("RYMEVISOR_IMAGES_PATH", "/var/lib/rymevisor/images"),
 			BackupsPath:   envOrDefault("RYMEVISOR_BACKUPS_PATH", "/var/lib/rymevisor/backups"),
@@ -186,9 +170,6 @@ func (c *Config) Validate() error {
 	}
 	if c.NATS.URL == "" {
 		return fmt.Errorf("NATS URL is required")
-	}
-	if c.Auth.JWTSecret == "" {
-		return fmt.Errorf("JWT secret is required")
 	}
 	return nil
 }

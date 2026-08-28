@@ -31,6 +31,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v1/firewall-rules/{id}", h.DeleteFirewallRule)
 
 	r.Post("/api/v1/floating-ips", h.AllocateFloatingIP)
+	r.Get("/api/v1/floating-ips", h.ListFloatingIPs)
 	r.Delete("/api/v1/floating-ips/{id}", h.ReleaseFloatingIP)
 }
 
@@ -204,4 +205,17 @@ func (h *Handler) ReleaseFloatingIP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "floating IP released"})
+}
+
+func (h *Handler) ListFloatingIPs(w http.ResponseWriter, r *http.Request) {
+	ips, err := h.svc.ListFloatingIPs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"floating_ips": ips,
+		"total":        len(ips),
+	})
 }
