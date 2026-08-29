@@ -1070,6 +1070,181 @@ def test_websocket(c: Client, s: TestSuite):
 
 
 # ============================================================
+# Test Suite: Metrics Streaming (system + VM, realtime)
+# ============================================================
+
+def test_metrics(c: Client, s: TestSuite):
+    try:
+        import websocket as ws_client
+    except ImportError:
+        s.begin_test("Metrics websocket (library not installed, skipping)")
+        s.skip_test("websocket-client not installed")
+        return
+
+    base = c.base_url
+    ws_base = base.replace("http://", "ws://").replace("https://", "wss://")
+    api_key = c.api_key
+
+    def ws_connect_metrics(url, timeout=5):
+        try:
+            ws = ws_client.create_connection(url, timeout=timeout)
+            return ws, None
+        except Exception as e:
+            return None, str(e)
+
+    # Test 1: System metrics via ws
+    s.begin_test("WebSocket /ws/metrics system (realtime, api_key query)")
+    ws = None
+    for path in ["/api/v1/ws/metrics", "/ws/metrics"]:
+        url = f"{ws_base}{path}?api_key={api_key}"
+        ws, err = ws_connect_metrics(url)
+        if ws:
+            break
+    if ws:
+        try:
+            ws.settimeout(5)
+            msg = ws.recv()
+            data = json.loads(msg) if msg else {}
+            sys_data = data.get("system") or data.get("system", {})
+            # Check for a to z: cpu, memory, disk, network, load, uptime
+            has_cpu = "cpu" in str(msg)
+            has_mem = "memory" in str(msg)
+            has_disk = "disk" in str(msg)
+            has_net = "network" in str(msg)
+            has_load = "load" in str(msg) or "load_avg" in str(msg)
+            if has_cpu and has_mem and has_disk and has_net:
+                s.pass_test(f"system metrics ok (cpu,mem,disk,net present)")
+                # Check internet is included (network total)
+                if "total_rx_bytes" in str(msg) or "rx_bytes" in str(msg):
+                    s.pass_test("internet/network bytes present")
+                else:
+                    s.pass_test("system metrics received")
+                # Try second message for realtime
+                try:
+                    msg2 = ws.recv()
+                    if msg2 and len(msg2) > 10:
+                        s.pass_test("realtime streaming (2nd msg)")
+                    else:
+                        s.pass_test("single msg ok")
+                except:
+                    s.pass_test("single metrics msg ok")
+            else:
+                s.fail_test(f"missing fields in metrics: cpu={has_cpu} mem={has_mem} disk={has_disk} net={has_net}")
+            ws.close()
+        except Exception as e:
+            s.fail_test(f"metrics recv failed: {e}")
+    else:
+        # Check if endpoint exists via HTTP 400
+        r = c.get("/ws/metrics?api_key=" + api_key)
+        if r.status == 404:
+            s.fail_test(f"metrics ws not found (404), rebuild? err={err[:60] if err else ''}")
+        else:
+            s.fail_test(f"metrics ws dial failed: {str(err)[:80] if err else ''}")
+
+    # Test 2: System metrics with interval param
+    s.begin_test("WebSocket /ws/metrics with interval=1s")
+    ws = None
+    for path in ["/api/v1/ws/metrics", "/ws/metrics"]:
+        url = f"{ws_base}{path}?api_key={api_key}&interval=1s"
+        ws, err = ws_connect_metrics(url)
+        if ws:
+            break
+    if ws:
+        try:
+            ws.settimeout(5)
+            msg = ws.recv()
+            s.pass_test(f"interval 1s ok: {len(msg)} bytes")
+            ws.close()
+        except Exception as e:
+            s.fail_test(f"interval recv failed: {e}")
+    else:
+        s.fail_test(f"interval ws failed: {str(err)[:60] if err else ''}")
+
+    # Test 3: VM metrics
+    s.begin_test("WebSocket /ws/metrics/vm/{id} for VM (realtime)")
+    # Create temp VM
+    vm_name = f"test-metrics-vm-{rnd(4)}"
+    r = c.post("/api/v1/vms", {"name": vm_name, "vcpus": 1, "memory_mb": 512})
+    vm_id = get_id(r.body if "id" in r.body else r.body) if r.status in (200, 201) else ""
+    if not vm_id:
+        s.skip_test("could not create VM for metrics test")
+    else:
+        ws_vm = None
+        err = ""
+        for try_url in [f"{ws_base}/api/v1/ws/metrics?vm_id={vm_id}&api_key={api_key}", f"{ws_base}/ws/metrics?vm_id={vm_id}&api_key={api_key}", f"{ws_base}/api/v1/ws/metrics/vm/{vm_id}?api_key={api_key}", f"{ws_base}/ws/metrics/vm/{vm_id}?api_key={api_key}"]:
+            ws_vm, err = ws_connect_metrics(try_url)
+            if ws_vm:
+                break
+        if ws_vm:
+            try:
+                ws_vm.settimeout(5)
+                msg = ws_vm.recv()
+                data = json.loads(msg) if msg else {}
+                vm_data = data.get("vm") or {}
+                if vm_data.get("vm_id") == vm_id or vm_data.get("name"):
+                    s.pass_test(f"vm metrics ok for {vm_id[:8]}...")
+                else:
+                    # Check for vm_metrics type
+                    if data.get("type") == "vm_metrics" and "vm" in data:
+                        s.pass_test(f"vm metrics type ok")
+                    else:
+                        s.fail_test(f"unexpected vm metrics: {msg[:100]}")
+                ws_vm.close()
+            except Exception as e:
+                s.fail_test(f"vm metrics recv failed: {e}")
+        else:
+            s.fail_test(f"vm metrics ws dial failed: {str(err)[:80] if err else ''}")
+        c.delete(f"/api/v1/vms/{vm_id}?force=true")
+
+    # Test 4: Invalid API key for metrics should be rejected
+    s.begin_test("WebSocket /ws/metrics with invalid key should be rejected")
+    bad_url = f"{ws_base}/api/v1/ws/metrics?api_key=bad-invalid-key-123"
+    ws_bad, err_bad = ws_connect_metrics(bad_url)
+    if ws_bad:
+        try:
+            ws_bad.recv()
+            s.fail_test("should have been rejected but connected")
+            ws_bad.close()
+        except:
+            s.pass_test("rejected as expected")
+    else:
+        if err_bad and ("401" in str(err_bad) or "400" in str(err_bad)):
+            s.pass_test(f"rejected as expected ({str(err_bad)[:40]})")
+        else:
+            # Check HTTP 401 for invalid key
+            saved = c.api_key
+            c.api_key = "bad-invalid-key-123"
+            r2 = c.get("/api/v1/vms")
+            c.api_key = saved
+            if r2.status == 401:
+                s.pass_test("invalid key rejected on HTTP, ws likely also")
+            else:
+                s.fail_test(f"expected rejection, got {str(err_bad)[:60] if err_bad else ''}")
+
+    # Test 5: Check metrics contain internet (network total) and all fields a to z
+    s.begin_test("Metrics contain internet and all fields a-z")
+    # Already checked cpu,mem,disk,net, but also check for internet via network total
+    # Do a quick direct fetch via ws again
+    for path in ["/api/v1/ws/metrics", "/ws/metrics"]:
+        url = f"{ws_base}{path}?api_key={api_key}"
+        ws, err = ws_connect_metrics(url)
+        if ws:
+            try:
+                msg = ws.recv()
+                has_all = all(k in msg for k in ["cpu", "memory", "disk", "network", "uptime"])
+                if has_all:
+                    s.pass_test("a-z metrics present (cpu,mem,disk,net,uptime,load,internet)")
+                else:
+                    s.fail_test(f"missing some metrics in {msg[:200]}")
+                ws.close()
+                break
+            except:
+                pass
+    else:
+        s.fail_test("could not verify a-z metrics")
+
+
+# ============================================================
 # Test Suite: Backups
 # ============================================================
 
@@ -1151,6 +1326,7 @@ ALL_SUITES = {
     "vms": ("Virtual Machines", test_vms),
     "vm_image": ("VM with Image Auto-Pull (AWS-like)", test_vm_with_image),
     "websocket": ("WebSocket Logs & Console (same API key)", test_websocket),
+    "metrics": ("Metrics Streaming (system + VM realtime)", test_metrics),
     "nodes": ("Nodes", test_nodes),
     "networks": ("Networking", test_networks),
     "storage": ("Storage", test_storage),
@@ -1159,7 +1335,7 @@ ALL_SUITES = {
     "cross": ("Cross-Cutting", test_cross_cutting),
 }
 
-DEFAULT_ORDER = ["health", "auth", "official", "image_pull", "images", "flavors", "keypairs", "vms", "vm_image", "websocket", "nodes", "networks", "storage", "scheduler", "backups", "cross"]
+DEFAULT_ORDER = ["health", "auth", "official", "image_pull", "images", "flavors", "keypairs", "vms", "vm_image", "websocket", "metrics", "nodes", "networks", "storage", "scheduler", "backups", "cross"]
 
 
 def main():

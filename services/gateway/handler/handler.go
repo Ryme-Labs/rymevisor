@@ -33,9 +33,13 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 	// WebSocket endpoints (same API key via header X-API-Key or ?api_key=)
 	r.Get("/ws/logs", g.HandleLogs)
 	r.Get("/ws/console", g.HandleConsole)
+	r.Get("/ws/metrics", g.HandleMetrics)
+	r.Get("/ws/metrics/vm/{id}", g.HandleMetrics)
 	r.Get("/api/v1/ws/logs", g.HandleLogs)
 	r.Get("/api/v1/ws/console", g.HandleConsole)
 	r.Get("/api/v1/ws/console/{id}", g.HandleConsole)
+	r.Get("/api/v1/ws/metrics", g.HandleMetrics)
+	r.Get("/api/v1/ws/metrics/vm/{id}", g.HandleMetrics)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/vms", func(r chi.Router) {
