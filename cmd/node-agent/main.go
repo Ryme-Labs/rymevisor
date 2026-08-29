@@ -57,6 +57,11 @@ func main() {
 		logger.Fatal("failed to subscribe to commands", zap.Error(err))
 	}
 
+	// Recover VMs that were running before restart/crash
+	if err := agent.RecoverVMs(ctx); err != nil {
+		logger.Error("VM recovery failed", zap.Error(err))
+	}
+
 	heartbeatInterval := cfg.Node.HeartbeatInt
 	if heartbeatInterval == 0 {
 		heartbeatInterval = 10 * time.Second

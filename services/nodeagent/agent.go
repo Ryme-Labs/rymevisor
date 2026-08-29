@@ -189,6 +189,100 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 		zap.Int64("memory_mb", cfg.MemoryMB),
 	)
 
+	// Persist config for recovery after reboot
+	if err := a.persistVMConfig(vmID, cfg, diskPath, mac, isoPath); err != nil {
+		a.logger.Warn("failed to persist vm config for recovery", zap.Error(err), zap.String("vm_id", vmID))
+	}
+
+	return nil
+}
+
+func (a *Agent) persistVMConfig(vmID string, cfg *VMStartConfig, diskPath, mac, isoPath string) error {
+	vmDir := filepath.Join(a.baseDir, vmID)
+	persisted := struct {
+		VMStartConfig
+		DiskPath string `json:"disk_path"`
+		MAC      string `json:"mac_address"`
+		ISOPath  string `json:"iso_path"`
+	}{
+		VMStartConfig: *cfg,
+		DiskPath:      diskPath,
+		MAC:           mac,
+		ISOPath:       isoPath,
+	}
+	data, err := json.Marshal(persisted)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(vmDir, "vm.json"), data, 0644)
+}
+
+func (a *Agent) loadVMConfig(vmID string) (*VMStartConfig, error) {
+	data, err := os.ReadFile(filepath.Join(a.baseDir, vmID, "vm.json"))
+	if err != nil {
+		return nil, err
+	}
+	var wrapper struct {
+		VMStartConfig
+		DiskPath string `json:"disk_path"`
+		MAC      string `json:"mac_address"`
+		ISOPath  string `json:"iso_path"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, err
+	}
+	if wrapper.DiskPath != "" {
+		wrapper.VMStartConfig.DiskPath = wrapper.DiskPath
+	}
+	if wrapper.MAC != "" {
+		wrapper.VMStartConfig.MACAddress = wrapper.MAC
+	}
+	return &wrapper.VMStartConfig, nil
+}
+
+// RecoverVMs scans baseDir for VMs that were running before restart and restarts them.
+func (a *Agent) RecoverVMs(ctx context.Context) error {
+	entries, err := os.ReadDir(a.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read baseDir for recovery: %w", err)
+	}
+
+	a.logger.Info("starting VM recovery", zap.Int("found_dirs", len(entries)))
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		vmID := entry.Name()
+		vmJson := filepath.Join(a.baseDir, vmID, "vm.json")
+		if _, err := os.Stat(vmJson); os.IsNotExist(err) {
+			continue
+		}
+
+		status, err := a.qemu.GetVMStatus(ctx, vmID)
+		if err == nil && status == "running" {
+			a.logger.Info("VM already running, skipping recovery", zap.String("vm_id", vmID), zap.String("status", status))
+			continue
+		}
+
+		cfg, err := a.loadVMConfig(vmID)
+		if err != nil {
+			a.logger.Warn("failed to load vm config for recovery", zap.Error(err), zap.String("vm_id", vmID))
+			continue
+		}
+
+		a.logger.Info("recovering VM after restart", zap.String("vm_id", vmID), zap.String("name", cfg.Name))
+		if err := a.StartVM(ctx, vmID, cfg); err != nil {
+			a.logger.Error("failed to recover VM", zap.Error(err), zap.String("vm_id", vmID))
+		} else {
+			a.logger.Info("VM recovered successfully", zap.String("vm_id", vmID))
+		}
+	}
+
+	a.logger.Info("VM recovery complete")
 	return nil
 }
 
@@ -205,6 +299,10 @@ func (a *Agent) StopVM(ctx context.Context, vmID string, force bool) error {
 	if err := a.qemu.StopVM(ctx, vmID, force); err != nil {
 		return fmt.Errorf("stop vm: %w", err)
 	}
+
+	// Remove persisted config so it won't be auto-recovered on next reboot
+	// Keep disk and cloud-init for manual restart, but don't auto-start
+	_ = os.Remove(filepath.Join(a.baseDir, vmID, "vm.json"))
 
 	a.logger.Info("vm stopped", zap.String("vm_id", vmID), zap.Bool("force", force))
 	return nil

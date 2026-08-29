@@ -67,6 +67,13 @@ func main() {
 	svc.InitPuller(cfg.Storage.ImagesPath, logger)
 	svc.SetFlavorRepository(flavorRepo)
 	svc.SetKeypairRepository(keypairRepo)
+
+	// Recovery: resume downloads and reconcile VMs after restart/crash
+	recovery := controlplane.NewRecovery(svc, logger)
+	if err := recovery.Recover(ctx); err != nil {
+		logger.Warn("initial recovery failed", zap.Error(err))
+	}
+
 	handler := cpHandler.NewHandler(svc)
 
 	healthHandler := health.NewHandler()

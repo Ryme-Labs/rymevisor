@@ -218,6 +218,28 @@ func (p *Puller) ResolveAndEnsureImage(ctx context.Context, imageRef string) (*d
 	return img, nil
 }
 
+func (p *Puller) ResumeDownloads(ctx context.Context) {
+	// On startup, find all images with downloading/processing status and resume them
+	images, _, err := p.imageRepo.List(ctx, domain.ImageFilter{})
+	if err != nil {
+		p.logger.Warn("failed to list images for resume", zap.Error(err))
+		return
+	}
+	for _, img := range images {
+		if img.Status == domain.ImageStatusDownloading || img.Status == domain.ImageStatusProcessing {
+			if img.SourceURL == "" {
+				continue
+			}
+			// Check if file already exists and is ready
+			if _, err := os.Stat(p.ImagePath(img.ID)); err == nil && img.Status == domain.ImageStatusReady {
+				continue
+			}
+			p.logger.Info("resuming image download on startup", zap.String("id", img.ID), zap.String("name", img.Name), zap.String("status", string(img.Status)))
+			go p.download(context.Background(), img, img.SourceURL)
+		}
+	}
+}
+
 func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 	p.mu.Lock()
 	if p.active[img.ID] {
@@ -246,7 +268,20 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 	tmpPath := p.ImagePath(img.ID) + ".tmp"
 	finalPath := p.ImagePath(img.ID)
 
-	// Create request with context
+	// Check for existing partial download for resume
+	var offset int64
+	var hasher = sha256.New()
+	if fi, err := os.Stat(tmpPath); err == nil && fi.Size() > 0 {
+		offset = fi.Size()
+		logger.Info("resuming partial download", zap.Int64("offset", offset))
+		// Hash the existing part for checksum continuity
+		if f, err := os.Open(tmpPath); err == nil {
+			io.Copy(hasher, f)
+			f.Close()
+		}
+	}
+
+	// Create request with context, support Range for resume
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		logger.Error("failed to create request", zap.Error(err))
@@ -254,6 +289,9 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 		return
 	}
 	req.Header.Set("User-Agent", "RymeVisor/1.0")
+	if offset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -263,7 +301,13 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	// Handle Range: 206 Partial Content or 200 OK (if server doesn't support range, restart)
+	if offset > 0 && resp.StatusCode == http.StatusOK {
+		logger.Warn("server does not support resume, restarting download from beginning")
+		os.Remove(tmpPath)
+		offset = 0
+		hasher = sha256.New()
+	} else if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		logger.Error("download failed with status", zap.Int("status", resp.StatusCode))
 		_ = p.imageRepo.UpdateStatus(context.Background(), img.ID, domain.ImageStatusError, 0, "")
 		return
@@ -272,27 +316,33 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 	// Update status to processing
 	_ = p.imageRepo.UpdateStatus(context.Background(), img.ID, domain.ImageStatusProcessing, 0, "")
 
-	out, err := os.Create(tmpPath)
+	var out *os.File
+	if offset > 0 {
+		out, err = os.OpenFile(tmpPath, os.O_APPEND|os.O_WRONLY, 0644)
+	} else {
+		out, err = os.Create(tmpPath)
+	}
 	if err != nil {
 		logger.Error("failed to create tmp file", zap.Error(err))
 		_ = p.imageRepo.UpdateStatus(context.Background(), img.ID, domain.ImageStatusError, 0, "")
 		return
 	}
 
-	hasher := sha256.New()
 	writer := io.MultiWriter(out, hasher)
 
 	written, err := io.Copy(writer, resp.Body)
 	out.Close()
 	if err != nil {
 		logger.Error("failed to write image", zap.Error(err))
-		os.Remove(tmpPath)
-		_ = p.imageRepo.UpdateStatus(context.Background(), img.ID, domain.ImageStatusError, 0, "")
+		// Don't delete partial file, keep for resume next time
+		_ = p.imageRepo.UpdateStatus(context.Background(), img.ID, domain.ImageStatusDownloading, 0, "")
 		return
 	}
+	// Total written includes offset if resumed
+	totalWritten := offset + written
 
 	checksum := hex.EncodeToString(hasher.Sum(nil))
-	logger.Info("download complete", zap.Int64("bytes", written), zap.String("sha256", checksum))
+	logger.Info("download complete", zap.Int64("bytes", totalWritten), zap.String("sha256", checksum))
 
 	// Determine if we need qemu-img convert
 	// If file is .img (raw) and we want qcow2, convert
@@ -301,7 +351,7 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 	isQcow2 := ext == ".qcow2"
 	needsConvert := !isQcow2
 
-	var sizeBytes int64 = written
+	var sizeBytes int64 = totalWritten
 	var finalChecksum = checksum
 
 	if needsConvert {

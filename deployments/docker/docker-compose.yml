@@ -75,6 +75,8 @@ services:
       RYMEVISOR_JWT_SECRET: "dev-secret-change-in-production"
       RYMEVISOR_LOG_LEVEL: "debug"
       RYMEVISOR_LOG_FORMAT: "console"
+    volumes:
+      - rymevisor_data:/var/lib/rymevisor
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,3 +183,4 @@ volumes:
   redis_data:
   nats_data:
   minio_data:
+  rymevisor_data:
