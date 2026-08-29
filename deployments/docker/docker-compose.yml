@@ -2,16 +2,16 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: rymevalor
-      POSTGRES_PASSWORD: rymevalor
-      POSTGRES_DB: rymevalor
+      POSTGRES_USER: rymevisor
+      POSTGRES_PASSWORD: rymevisor
+      POSTGRES_DB: rymevisor
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rymevalor"]
+      test: ["CMD-SHELL", "pg_isready -U rymevisor"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -63,8 +63,8 @@ services:
     build:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.service
-    args:
-      SERVICE: control-plane
+      args:
+        SERVICE: control-plane
     ports:
       - "8080:8080"
     environment:
@@ -87,8 +87,8 @@ services:
     build:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.service
-    args:
-      SERVICE: api-gateway
+      args:
+        SERVICE: api-gateway
     ports:
       - "8081:8080"
     environment:
@@ -108,8 +108,8 @@ services:
     build:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.service
-    args:
-      SERVICE: auth-service
+      args:
+        SERVICE: auth-service
     ports:
       - "8082:8080"
     environment:
@@ -126,8 +126,8 @@ services:
     build:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.service
-    args:
-      SERVICE: scheduler
+      args:
+        SERVICE: scheduler
     ports:
       - "8083:8080"
     environment:
@@ -146,8 +146,8 @@ services:
     build:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.service
-    args:
-      SERVICE: networking-engine
+      args:
+        SERVICE: networking-engine
     ports:
       - "8084:8080"
     environment:
@@ -163,8 +163,8 @@ services:
     build:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.service
-    args:
-      SERVICE: storage-manager
+      args:
+        SERVICE: storage-manager
     ports:
       - "8085:8080"
     environment:

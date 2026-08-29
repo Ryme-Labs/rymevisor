@@ -638,7 +638,7 @@ DEFAULT_ORDER = ["health", "auth", "vms", "nodes", "networks", "storage", "sched
 
 def main():
     parser = argparse.ArgumentParser(description="RymeVisor API Test Suite")
-    parser.add_argument("--base-url", default="http://localhost:8080")
+    parser.add_argument("--base-url", default=None, help="Base URL (default: http://localhost:8081, will prompt if not set)")
     parser.add_argument("--service", "-s", choices=list(ALL_SUITES.keys()))
     parser.add_argument("--list", "-l", action="store_true")
     args = parser.parse_args()
@@ -652,9 +652,36 @@ def main():
 
     api_key = os.environ.get("RYMEVISOR_API_KEY", "")
     if not api_key:
+        try:
+            api_key = input("API Key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+    if not api_key:
         print(f"{Color.RED}ERROR: RYMEVISOR_API_KEY not set{Color.RESET}")
         print("Usage: RYMEVISOR_API_KEY=yourkey python3 scripts/test_api.py")
+        print("   or  run interactively and enter the key when prompted")
         return 1
+
+    base_url = args.base_url
+    if not base_url:
+        if sys.stdin.isatty():
+            try:
+                port = input("Port [8081]: ").strip()
+                if not port:
+                    port = "8081"
+                if port.startswith("http"):
+                    base_url = port
+                else:
+                    base_url = f"http://localhost:{port}"
+            except (EOFError, KeyboardInterrupt):
+                print()
+                base_url = "http://localhost:8081"
+        else:
+            base_url = "http://localhost:8081"
+    if not base_url:
+        base_url = "http://localhost:8081"
+    args.base_url = base_url
 
     print(f"{Color.BOLD}RymeVisor API Test Suite{Color.RESET}")
     print(f"Target: {Color.CYAN}{args.base_url}{Color.RESET}")

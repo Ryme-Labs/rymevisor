@@ -46,12 +46,12 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: rymevalor
-          POSTGRES_PASSWORD: rymevalor
-          POSTGRES_DB: rymevalor
+          POSTGRES_USER: rymevisor
+          POSTGRES_PASSWORD: rymevisor
+          POSTGRES_DB: rymevisor
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U rymevalor"
+          --health-cmd "pg_isready -U rymevisor"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5

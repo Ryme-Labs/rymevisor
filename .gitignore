@@ -44,6 +44,8 @@ gen/
 
 # Logs
 *.log
+.dev-logs/
+.dev-pids
 
 # Docs
 docs/

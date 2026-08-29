@@ -1,4 +1,4 @@
-.PHONY: all build generate migrate up down test lint clean
+.PHONY: all build generate migrate up down dev stop test lint clean
 
 # Default target
 all: generate build
@@ -21,11 +21,24 @@ build:
 build-%:
 	go build -o bin/$* ./cmd/$*
 
-# Start local dev environment
-up:
-	docker compose -f deployments/docker/docker-compose.yml up -d
+# Start everything locally (infra + all services)
+dev:
+	./start.sh
 
-# Stop local dev environment
+# Stop all services and infra
+stop:
+	@if [ -f .dev-pids ]; then \
+		while read -r pid; do kill "$$pid" 2>/dev/null || true; done < .dev-pids; \
+		rm -f .dev-pids; \
+	fi
+	@docker compose -f deployments/docker/docker-compose.yml down 2>/dev/null || true
+	@echo "Stopped."
+
+# Start infra containers only
+up:
+	docker compose -f deployments/docker/docker-compose.yml up -d postgres redis nats minio
+
+# Stop infra containers
 down:
 	docker compose -f deployments/docker/docker-compose.yml down
 
@@ -71,12 +84,14 @@ docker-build:
 # Show help
 help:
 	@echo "Available targets:"
+	@echo "  dev          - Start everything locally (infra + all services)"
+	@echo "  stop         - Stop all services and infra"
 	@echo "  all          - Generate code and build all services"
 	@echo "  generate     - Generate protobuf code"
 	@echo "  build        - Build all services"
 	@echo "  build-<svc>  - Build a specific service"
-	@echo "  up           - Start local dev environment"
-	@echo "  down         - Stop local dev environment"
+	@echo "  up           - Start infra containers only"
+	@echo "  down         - Stop infra containers"
 	@echo "  test         - Run all tests"
 	@echo "  test-cover   - Run tests with coverage"
 	@echo "  lint         - Run linter"
