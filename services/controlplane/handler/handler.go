@@ -50,10 +50,27 @@ func (h *Handler) Routes() chi.Router {
 	})
 
 	r.Route("/images", func(r chi.Router) {
+		r.Get("/official", h.ListOfficialImages)
+		r.Post("/pull", h.PullOfficialImage)
+		r.Post("/import", h.ImportImage)
 		r.Post("/", h.CreateImage)
 		r.Get("/", h.ListImages)
 		r.Get("/{id}", h.GetImage)
 		r.Delete("/{id}", h.DeleteImage)
+	})
+
+	r.Route("/flavors", func(r chi.Router) {
+		r.Post("/", h.CreateFlavor)
+		r.Get("/", h.ListFlavors)
+		r.Get("/{id}", h.GetFlavor)
+		r.Delete("/{id}", h.DeleteFlavor)
+	})
+
+	r.Route("/keypairs", func(r chi.Router) {
+		r.Post("/", h.CreateKeypair)
+		r.Get("/", h.ListKeypairs)
+		r.Get("/{id}", h.GetKeypair)
+		r.Delete("/{id}", h.DeleteKeypair)
 	})
 
 	r.Route("/backups", func(r chi.Router) {
@@ -477,6 +494,136 @@ func (h *Handler) DeleteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) ListOfficialImages(w http.ResponseWriter, r *http.Request) {
+	images, err := h.svc.ListOfficialImages(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": images, "total": len(images)})
+}
+
+func (h *Handler) PullOfficialImage(w http.ResponseWriter, r *http.Request) {
+	var req domain.PullImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	img, err := h.svc.PullOfficialImage(r.Context(), req.OS, req.OSVersion, req.Architecture)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, img)
+}
+
+func (h *Handler) ImportImage(w http.ResponseWriter, r *http.Request) {
+	var req domain.ImportImageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	img, err := h.svc.ImportFromURL(r.Context(), &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, img)
+}
+
+func (h *Handler) CreateFlavor(w http.ResponseWriter, r *http.Request) {
+	var req domain.CreateFlavorRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	flavor, err := h.svc.CreateFlavor(r.Context(), &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, flavor)
+}
+
+func (h *Handler) ListFlavors(w http.ResponseWriter, r *http.Request) {
+	flavors, err := h.svc.ListFlavors(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": flavors, "total": len(flavors)})
+}
+
+func (h *Handler) GetFlavor(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	flavor, err := h.svc.GetFlavor(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if flavor == nil {
+		writeError(w, http.StatusNotFound, "flavor not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, flavor)
+}
+
+func (h *Handler) DeleteFlavor(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.DeleteFlavor(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) CreateKeypair(w http.ResponseWriter, r *http.Request) {
+	var req domain.CreateKeypairRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	kp, err := h.svc.CreateKeypair(r.Context(), &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, kp)
+}
+
+func (h *Handler) ListKeypairs(w http.ResponseWriter, r *http.Request) {
+	orgID := r.URL.Query().Get("organization_id")
+	kps, err := h.svc.ListKeypairs(r.Context(), orgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": kps, "total": len(kps)})
+}
+
+func (h *Handler) GetKeypair(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	kp, err := h.svc.GetKeypair(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if kp == nil {
+		writeError(w, http.StatusNotFound, "keypair not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, kp)
+}
+
+func (h *Handler) DeleteKeypair(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.DeleteKeypair(r.Context(), id); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

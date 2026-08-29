@@ -53,6 +53,7 @@ type Disk struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	Type        string `json:"type"`
 	StoragePool string `json:"storage_pool"`
+	ImageID     string `json:"image_id,omitempty"`
 	Boot        bool   `json:"boot"`
 	Order       int32  `json:"order"`
 }
@@ -123,6 +124,8 @@ type VMService interface {
 type CreateVMRequest struct {
 	Name               string                      `json:"name"`
 	NodeID             string                      `json:"node_id"`
+	FlavorID           string                      `json:"flavor_id,omitempty"`
+	Flavor             string                      `json:"flavor,omitempty"` // alias name like "small", "medium"
 	VCpus              int32                       `json:"vcpus"`
 	MemoryMB           int64                       `json:"memory_mb"`
 	CPUModel           string                      `json:"cpu_model"`
@@ -131,6 +134,8 @@ type CreateVMRequest struct {
 	EnableTPM          bool                        `json:"enable_tpm"`
 	Hugepages          bool                        `json:"hugepages"`
 	CloudInit          string                      `json:"cloud_init"`
+	KeypairID          string                      `json:"keypair_id,omitempty"`
+	Keypair            string                      `json:"keypair,omitempty"` // name
 	Disks              []CreateDiskRequest         `json:"disks"`
 	NetworkInterfaces  []CreateNetworkInterfaceRequest `json:"network_interfaces"`
 	Tags               []string                    `json:"tags"`
@@ -143,6 +148,8 @@ type CreateDiskRequest struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	Type        string `json:"type"`
 	StoragePool string `json:"storage_pool"`
+	ImageID     string `json:"image_id,omitempty"`
+	Image       string `json:"image,omitempty"` // alias: ubuntu, ubuntu-22.04, debian-12, etc.
 }
 
 type CreateNetworkInterfaceRequest struct {

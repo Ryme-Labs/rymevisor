@@ -12,10 +12,10 @@ build:
 	go build -o bin/control-plane ./cmd/control-plane
 	go build -o bin/node-agent ./cmd/node-agent
 	go build -o bin/api-gateway ./cmd/api-gateway
-	go build -o bin/auth-service ./cmd/auth-service
 	go build -o bin/scheduler ./cmd/scheduler
 	go build -o bin/networking-engine ./cmd/networking-engine
 	go build -o bin/storage-manager ./cmd/storage-manager
+	@if [ -d ./cmd/auth-service ]; then go build -o bin/auth-service ./cmd/auth-service; fi
 
 # Build a specific service
 build-%:

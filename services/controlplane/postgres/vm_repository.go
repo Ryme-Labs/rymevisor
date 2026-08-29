@@ -55,11 +55,19 @@ func (r *VMRepository) Create(ctx context.Context, vm *domain.VirtualMachine) er
 
 	for _, disk := range vm.Disks {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO vm_disks (id, vm_id, name, size_bytes, type, storage_pool, boot, "order")
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			INSERT INTO vm_disks (id, vm_id, name, size_bytes, type, storage_pool, image_id, boot, "order")
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7,'')::uuid, $8, $9)
 		`,
-			disk.ID, vm.ID, disk.Name, disk.SizeBytes, disk.Type, disk.StoragePool, disk.Boot, disk.Order,
+			disk.ID, vm.ID, disk.Name, disk.SizeBytes, disk.Type, disk.StoragePool, disk.ImageID, disk.Boot, disk.Order,
 		)
+		if err != nil && strings.Contains(err.Error(), "does not exist") {
+			_, err = tx.Exec(ctx, `
+				INSERT INTO vm_disks (id, vm_id, name, size_bytes, type, storage_pool, boot, "order")
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			`,
+				disk.ID, vm.ID, disk.Name, disk.SizeBytes, disk.Type, disk.StoragePool, disk.Boot, disk.Order,
+			)
+		}
 		if err != nil {
 			return fmt.Errorf("vm_repo: insert disk: %w", err)
 		}
@@ -234,23 +242,44 @@ func (r *VMRepository) UpdateStatus(ctx context.Context, id string, status domai
 
 func (r *VMRepository) loadRelated(ctx context.Context, vm *domain.VirtualMachine) error {
 	diskRows, err := r.pool.Query(ctx, `
-		SELECT id, name, size_bytes, type, storage_pool, boot, "order"
+		SELECT id, name, size_bytes, type, storage_pool, COALESCE(image_id::text,''), boot, "order"
 		FROM vm_disks WHERE vm_id = $1 ORDER BY "order"
 	`, vm.ID)
-	if err != nil {
-		return fmt.Errorf("vm_repo: query disks: %w", err)
-	}
-	defer diskRows.Close()
-
-	for diskRows.Next() {
-		var d domain.Disk
-		if err := diskRows.Scan(&d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.Boot, &d.Order); err != nil {
-			return fmt.Errorf("vm_repo: scan disk: %w", err)
+	if err != nil && strings.Contains(err.Error(), "does not exist") {
+		// Fallback for DB without image_id column (pre-migration)
+		diskRows, err = r.pool.Query(ctx, `
+			SELECT id, name, size_bytes, type, storage_pool, boot, "order"
+			FROM vm_disks WHERE vm_id = $1 ORDER BY "order"
+		`, vm.ID)
+		if err != nil {
+			return fmt.Errorf("vm_repo: query disks: %w", err)
 		}
-		vm.Disks = append(vm.Disks, d)
-	}
-	if err := diskRows.Err(); err != nil {
-		return err
+		defer diskRows.Close()
+		for diskRows.Next() {
+			var d domain.Disk
+			if err := diskRows.Scan(&d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.Boot, &d.Order); err != nil {
+				return fmt.Errorf("vm_repo: scan disk: %w", err)
+			}
+			vm.Disks = append(vm.Disks, d)
+		}
+		if err := diskRows.Err(); err != nil {
+			return err
+		}
+	} else {
+		if err != nil {
+			return fmt.Errorf("vm_repo: query disks: %w", err)
+		}
+		defer diskRows.Close()
+		for diskRows.Next() {
+			var d domain.Disk
+			if err := diskRows.Scan(&d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.ImageID, &d.Boot, &d.Order); err != nil {
+				return fmt.Errorf("vm_repo: scan disk: %w", err)
+			}
+			vm.Disks = append(vm.Disks, d)
+		}
+		if err := diskRows.Err(); err != nil {
+			return err
+		}
 	}
 
 	nicRows, err := r.pool.Query(ctx, `

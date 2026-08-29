@@ -54,6 +54,8 @@ func main() {
 	imageRepo := postgres.NewImageRepository(pool)
 	backupRepo := postgres.NewBackupRepository(pool)
 	snapRepo := postgres.NewSnapshotRepository(pool)
+	flavorRepo := postgres.NewFlavorRepository(pool)
+	keypairRepo := postgres.NewKeypairRepository(pool)
 
 	var publisher controlplane.EventPublisher
 	if js != nil {
@@ -61,6 +63,10 @@ func main() {
 	}
 
 	svc := controlplane.NewService(vmRepo, nodeRepo, imageRepo, backupRepo, snapRepo, publisher)
+	svc.SetLogger(logger)
+	svc.InitPuller(cfg.Storage.ImagesPath, logger)
+	svc.SetFlavorRepository(flavorRepo)
+	svc.SetKeypairRepository(keypairRepo)
 	handler := cpHandler.NewHandler(svc)
 
 	healthHandler := health.NewHandler()

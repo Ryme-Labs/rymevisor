@@ -33,6 +33,7 @@ type Image struct {
 	SizeBytes    int64       `json:"size_bytes"`
 	Status       ImageStatus `json:"status"`
 	Checksum     string      `json:"checksum"`
+	SourceURL    string      `json:"source_url,omitempty"`
 	Tags         []string    `json:"tags,omitempty"`
 	CreatedAt    time.Time   `json:"created_at"`
 	UpdatedAt    time.Time   `json:"updated_at"`
@@ -41,7 +42,10 @@ type Image struct {
 type ImageRepository interface {
 	Create(ctx context.Context, img *Image) error
 	GetByID(ctx context.Context, id string) (*Image, error)
+	GetByName(ctx context.Context, name string) (*Image, error)
 	List(ctx context.Context, filter ImageFilter) ([]*Image, int, error)
+	Update(ctx context.Context, img *Image) error
+	UpdateStatus(ctx context.Context, id string, status ImageStatus, sizeBytes int64, checksum string) error
 	Delete(ctx context.Context, id string) error
 }
 
@@ -60,6 +64,27 @@ type ImageService interface {
 	ListImages(ctx context.Context, filter ImageFilter) ([]*Image, int, error)
 	DeleteImage(ctx context.Context, id string) error
 	ImportFromURL(ctx context.Context, req *ImportImageRequest) (*Image, error)
+	PullOfficialImage(ctx context.Context, os, version, arch string) (*Image, error)
+	ListOfficialImages(ctx context.Context) ([]OfficialImage, error)
+	GetOfficialImage(ctx context.Context, os, version, arch string) (*OfficialImage, error)
+}
+
+type OfficialImage struct {
+	Name         string `json:"name"`
+	OS           string `json:"os"`
+	OSVersion    string `json:"os_version"`
+	Architecture string `json:"architecture"`
+	URL          string `json:"url"`
+	Checksum     string `json:"checksum,omitempty"`
+	SizeBytes    int64  `json:"size_bytes"`
+	Description  string `json:"description"`
+}
+
+type PullImageRequest struct {
+	OS           string `json:"os"`
+	OSVersion    string `json:"os_version"`
+	Architecture string `json:"architecture"`
+	Name         string `json:"name,omitempty"`
 }
 
 type UploadImageRequest struct {

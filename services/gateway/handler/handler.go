@@ -97,6 +97,23 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 		})
 
 		r.Route("/images", func(r chi.Router) {
+			r.Get("/official", g.proxy(cfg.ControlPlaneURL))
+			r.Post("/pull", g.proxy(cfg.ControlPlaneURL))
+			r.Post("/import", g.proxy(cfg.ControlPlaneURL))
+			r.Post("/", g.proxy(cfg.ControlPlaneURL))
+			r.Get("/", g.proxy(cfg.ControlPlaneURL))
+			r.Get("/{id}", g.proxy(cfg.ControlPlaneURL))
+			r.Delete("/{id}", g.proxy(cfg.ControlPlaneURL))
+		})
+
+		r.Route("/flavors", func(r chi.Router) {
+			r.Post("/", g.proxy(cfg.ControlPlaneURL))
+			r.Get("/", g.proxy(cfg.ControlPlaneURL))
+			r.Get("/{id}", g.proxy(cfg.ControlPlaneURL))
+			r.Delete("/{id}", g.proxy(cfg.ControlPlaneURL))
+		})
+
+		r.Route("/keypairs", func(r chi.Router) {
 			r.Post("/", g.proxy(cfg.ControlPlaneURL))
 			r.Get("/", g.proxy(cfg.ControlPlaneURL))
 			r.Get("/{id}", g.proxy(cfg.ControlPlaneURL))

@@ -59,6 +59,9 @@ type VMStartConfig struct {
 	MACAddress string `json:"mac_address"`
 	SSHKey     string `json:"ssh_key,omitempty"`
 	ImageURL   string `json:"image_url,omitempty"`
+	ImageID    string `json:"image_id,omitempty"`
+	ImagePath  string `json:"image_path,omitempty"`
+	SizeBytes  int64  `json:"size_bytes,omitempty"`
 }
 
 type VMCommandResult struct {
@@ -82,6 +85,10 @@ func NewAgent(nodeID, hostname string, js jetstream.JetStream, logger *zap.Logge
 	}
 }
 
+func (a *Agent) ImagesDir() string {
+	return "/var/lib/rymevisor/images"
+}
+
 func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("vm config is required")
@@ -96,7 +103,36 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 	if diskPath == "" {
 		diskPath = filepath.Join(vmDir, "root.qcow2")
 		if _, err := os.Stat(diskPath); os.IsNotExist(err) {
-			path, err := a.qemu.CreateDisk(ctx, vmID, "root", 20*1024*1024*1024)
+			// Determine backing image if provided
+			imagePath := ""
+			if cfg.ImagePath != "" {
+				imagePath = cfg.ImagePath
+			} else if cfg.ImageID != "" {
+				candidate := filepath.Join(a.ImagesDir(), cfg.ImageID+".qcow2")
+				if _, err := os.Stat(candidate); err == nil {
+					imagePath = candidate
+				} else {
+					// Try without extension or with raw
+					if _, err := os.Stat(filepath.Join(a.ImagesDir(), cfg.ImageID+".raw")); err == nil {
+						imagePath = filepath.Join(a.ImagesDir(), cfg.ImageID+".raw")
+					}
+				}
+			} else if cfg.ImageURL != "" {
+				// Fallback: try to find by URL hash? For now, ignore
+				a.logger.Warn("image_url provided but not handled on node-agent, creating empty disk", zap.String("url", cfg.ImageURL))
+			}
+			sizeBytes := cfg.SizeBytes
+			if sizeBytes == 0 {
+				sizeBytes = 20 * 1024 * 1024 * 1024
+			}
+			var path string
+			var err error
+			if imagePath != "" {
+				path, err = a.qemu.CreateDiskFromImage(ctx, vmID, "root", sizeBytes, imagePath)
+				a.logger.Info("creating disk from image", zap.String("image", imagePath), zap.String("disk", path))
+			} else {
+				path, err = a.qemu.CreateDisk(ctx, vmID, "root", sizeBytes)
+			}
 			if err != nil {
 				return fmt.Errorf("create root disk: %w", err)
 			}

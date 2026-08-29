@@ -2,11 +2,16 @@ package controlplane
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/rymelabs/rymevisor/services/controlplane/catalog"
 	"github.com/rymelabs/rymevisor/services/controlplane/domain"
+	"go.uber.org/zap"
 )
 
 type Service struct {
@@ -15,7 +20,11 @@ type Service struct {
 	imageRepo  domain.ImageRepository
 	backupRepo domain.BackupRepository
 	snapRepo   domain.SnapshotRepository
+	flavorRepo domain.FlavorRepository
+	keypairRepo domain.KeypairRepository
 	publisher  EventPublisher
+	puller     *Puller
+	logger     *zap.Logger
 }
 
 type EventPublisher interface {
@@ -38,13 +47,87 @@ func NewService(
 		backupRepo: backupRepo,
 		snapRepo:   snapRepo,
 		publisher:  publisher,
+		logger:     zap.NewNop(),
 	}
+}
+
+func (s *Service) SetPuller(puller *Puller) {
+	s.puller = puller
+}
+
+func (s *Service) SetLogger(logger *zap.Logger) {
+	if logger != nil {
+		s.logger = logger
+		if s.puller != nil {
+			s.puller.logger = logger
+		}
+	}
+}
+
+func (s *Service) InitPuller(imagesDir string, logger *zap.Logger) {
+	if logger == nil {
+		logger = s.logger
+	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	s.puller = NewPuller(s.imageRepo, imagesDir, logger)
+}
+
+func (s *Service) SetFlavorRepository(repo domain.FlavorRepository) {
+	s.flavorRepo = repo
+}
+
+func (s *Service) SetKeypairRepository(repo domain.KeypairRepository) {
+	s.keypairRepo = repo
 }
 
 func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*domain.VirtualMachine, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("vm name is required")
 	}
+
+	// Resolve flavor if provided (e.g., "small", "medium", "large" or flavor ID)
+	if req.FlavorID != "" || req.Flavor != "" {
+		if s.flavorRepo != nil {
+			var flavor *domain.Flavor
+			var err error
+			if req.FlavorID != "" {
+				flavor, err = s.flavorRepo.GetByID(ctx, req.FlavorID)
+			} else {
+				flavor, err = s.flavorRepo.GetByName(ctx, req.Flavor)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("get flavor: %w", err)
+			}
+			if flavor == nil {
+				return nil, fmt.Errorf("flavor %q not found", req.Flavor+req.FlavorID)
+			}
+			// Override with flavor values if not explicitly set
+			if req.VCpus == 0 {
+				req.VCpus = flavor.VCpus
+			}
+			if req.MemoryMB == 0 {
+				req.MemoryMB = flavor.MemoryMB
+			}
+			// If no disks specified, use flavor disk size
+			if len(req.Disks) == 0 && flavor.DiskGB > 0 {
+				req.Disks = []domain.CreateDiskRequest{
+					{Name: "root", SizeBytes: flavor.DiskGB * 1024 * 1024 * 1024, Type: "qcow2", StoragePool: "default"},
+				}
+			}
+		} else if req.VCpus == 0 || req.MemoryMB == 0 {
+			return nil, fmt.Errorf("flavor not available, specify vcpus and memory directly")
+		}
+	}
+
+	// Resolve keypair if provided by name
+	if req.Keypair != "" && req.KeypairID == "" && s.keypairRepo != nil {
+		if kp, _ := s.keypairRepo.GetByName(ctx, req.Keypair, ""); kp != nil {
+			req.KeypairID = kp.ID
+		}
+	}
+
 	if req.VCpus < 1 {
 		return nil, fmt.Errorf("vcpus must be at least 1")
 	}
@@ -70,11 +153,15 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 		Labels:         req.Labels,
 	}
 
+	if req.KeypairID != "" {
+		vm.SSHKeyID = &req.KeypairID
+	}
+
 	if req.NodeID != "" {
 		vm.NodeID = &req.NodeID
 	}
 
-	if len(vm.Disks) == 0 {
+	if len(req.Disks) == 0 {
 		vm.Disks = []domain.Disk{
 			{
 				ID:          uuid.New().String(),
@@ -88,12 +175,83 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 		}
 	} else {
 		for i := range req.Disks {
+			diskReq := req.Disks[i]
+			imageID := diskReq.ImageID
+
+			// Resolve image alias like "ubuntu", "ubuntu-22.04", "debian"
+			if imageID == "" && diskReq.Image != "" {
+				if s.puller != nil {
+					if img, err := s.puller.ResolveAndEnsureImage(ctx, diskReq.Image); err == nil && img != nil {
+						imageID = img.ID
+						// Use image size if disk size not specified
+						if diskReq.SizeBytes == 0 && img.SizeBytes > 0 {
+							diskReq.SizeBytes = img.SizeBytes
+						}
+					} else if err != nil {
+						// Try catalog directly as fallback
+						if oi, cerr := catalog.ResolveImageAlias(diskReq.Image); cerr == nil {
+							if pulled, perr := s.PullOfficialImage(ctx, oi.OS, oi.OSVersion, oi.Architecture); perr == nil && pulled != nil {
+								imageID = pulled.ID
+							}
+						}
+						if imageID == "" {
+							return nil, fmt.Errorf("image %q not found: %w", diskReq.Image, err)
+						}
+					}
+				} else {
+					// Without puller, try DB lookup
+					if img, _ := s.imageRepo.GetByName(ctx, diskReq.Image); img != nil {
+						imageID = img.ID
+					} else if oi, err := catalog.ResolveImageAlias(diskReq.Image); err == nil {
+						// Auto-create DB entry for official image (without download)
+						// Caller should use /images/pull to actually download
+						return nil, fmt.Errorf("image %q not cached, pull it first via POST /api/v1/images/pull {\"os\":\"%s\",\"os_version\":\"%s\",\"architecture\":\"%s\"}", diskReq.Image, oi.OS, oi.OSVersion, oi.Architecture)
+					} else {
+						return nil, fmt.Errorf("unknown image %q", diskReq.Image)
+					}
+				}
+			} else if imageID != "" {
+				// Validate image exists
+				if s.puller != nil {
+					if img, err := s.puller.ResolveAndEnsureImage(ctx, imageID); err != nil {
+						return nil, fmt.Errorf("image %q: %w", imageID, err)
+					} else if img != nil {
+						imageID = img.ID // normalize to resolved ID
+					}
+				} else {
+					if img, _ := s.imageRepo.GetByID(ctx, imageID); img == nil {
+						return nil, fmt.Errorf("image %q not found", imageID)
+					}
+				}
+			}
+
+			sizeBytes := diskReq.SizeBytes
+			if sizeBytes == 0 {
+				sizeBytes = 20 * 1024 * 1024 * 1024
+			}
+			diskType := diskReq.Type
+			if diskType == "" {
+				diskType = "qcow2"
+			}
+			pool := diskReq.StoragePool
+			if pool == "" {
+				pool = "default"
+			}
+			name := diskReq.Name
+			if name == "" {
+				name = fmt.Sprintf("disk-%d", i)
+				if i == 0 {
+					name = "root"
+				}
+			}
+
 			vm.Disks = append(vm.Disks, domain.Disk{
 				ID:          uuid.New().String(),
-				Name:        req.Disks[i].Name,
-				SizeBytes:   req.Disks[i].SizeBytes,
-				Type:        req.Disks[i].Type,
-				StoragePool: req.Disks[i].StoragePool,
+				Name:        name,
+				SizeBytes:   sizeBytes,
+				Type:        diskType,
+				StoragePool: pool,
+				ImageID:     imageID,
 				Boot:        i == 0,
 				Order:       int32(i),
 			})
@@ -604,6 +762,187 @@ func (s *Service) DeleteImage(ctx context.Context, id string) error {
 	}
 
 	return nil
+}
+
+func (s *Service) PullOfficialImage(ctx context.Context, osName, version, arch string) (*domain.Image, error) {
+	if s.puller == nil {
+		return nil, fmt.Errorf("image puller not configured")
+	}
+	return s.puller.PullOfficialImage(ctx, osName, version, arch)
+}
+
+func (s *Service) ImportFromURL(ctx context.Context, req *domain.ImportImageRequest) (*domain.Image, error) {
+	if s.puller == nil {
+		return nil, fmt.Errorf("image puller not configured")
+	}
+	return s.puller.ImportFromURL(ctx, req)
+}
+
+func (s *Service) ListOfficialImages(ctx context.Context) ([]domain.OfficialImage, error) {
+	return catalog.List(), nil
+}
+
+func (s *Service) GetOfficialImage(ctx context.Context, osName, version, arch string) (*domain.OfficialImage, error) {
+	return catalog.Find(osName, version, arch)
+}
+
+func (s *Service) ResolveImage(ctx context.Context, ref string) (*domain.Image, error) {
+	if s.puller == nil {
+		// Fallback to DB only
+		if img, _ := s.imageRepo.GetByID(ctx, ref); img != nil {
+			return img, nil
+		}
+		if img, _ := s.imageRepo.GetByName(ctx, ref); img != nil {
+			return img, nil
+		}
+		return nil, fmt.Errorf("image %q not found", ref)
+	}
+	return s.puller.ResolveAndEnsureImage(ctx, ref)
+}
+
+// ── Flavors ─────────────────────────────────────────────────
+
+func (s *Service) CreateFlavor(ctx context.Context, req *domain.CreateFlavorRequest) (*domain.Flavor, error) {
+	if s.flavorRepo == nil {
+		return nil, fmt.Errorf("flavor repository not configured")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("flavor name is required")
+	}
+	if req.VCpus < 1 {
+		return nil, fmt.Errorf("vcpus must be at least 1")
+	}
+	if req.MemoryMB < 128 {
+		return nil, fmt.Errorf("memory must be at least 128 MB")
+	}
+	if req.DiskGB < 1 {
+		return nil, fmt.Errorf("disk_gb must be at least 1")
+	}
+	existing, _ := s.flavorRepo.GetByName(ctx, req.Name)
+	if existing != nil {
+		return nil, fmt.Errorf("flavor with name %q already exists", req.Name)
+	}
+	f := &domain.Flavor{
+		ID:          uuid.New().String(),
+		Name:        req.Name,
+		Description: req.Description,
+		VCpus:       req.VCpus,
+		MemoryMB:    req.MemoryMB,
+		DiskGB:      req.DiskGB,
+	}
+	if err := s.flavorRepo.Create(ctx, f); err != nil {
+		return nil, fmt.Errorf("create flavor: %w", err)
+	}
+	return f, nil
+}
+
+func (s *Service) GetFlavor(ctx context.Context, id string) (*domain.Flavor, error) {
+	if s.flavorRepo == nil {
+		return nil, fmt.Errorf("flavor repository not configured")
+	}
+	return s.flavorRepo.GetByID(ctx, id)
+}
+
+func (s *Service) ListFlavors(ctx context.Context) ([]*domain.Flavor, error) {
+	if s.flavorRepo == nil {
+		return nil, fmt.Errorf("flavor repository not configured")
+	}
+	return s.flavorRepo.List(ctx)
+}
+
+func (s *Service) DeleteFlavor(ctx context.Context, id string) error {
+	if s.flavorRepo == nil {
+		return fmt.Errorf("flavor repository not configured")
+	}
+	f, err := s.flavorRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if f == nil {
+		return fmt.Errorf("flavor not found")
+	}
+	return s.flavorRepo.Delete(ctx, id)
+}
+
+// ── Keypairs ────────────────────────────────────────────────
+
+func fingerprintPublicKey(pubKey string) string {
+	parts := strings.Fields(pubKey)
+	if len(parts) < 2 {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(parts[1])
+	if err != nil {
+		// Try RawStdEncoding
+		decoded, err = base64.RawStdEncoding.DecodeString(parts[1])
+		if err != nil {
+			return ""
+		}
+	}
+	sum := sha256.Sum256(decoded)
+	return fmt.Sprintf("%x", sum[:])[:16]
+}
+
+func (s *Service) CreateKeypair(ctx context.Context, req *domain.CreateKeypairRequest) (*domain.Keypair, error) {
+	if s.keypairRepo == nil {
+		return nil, fmt.Errorf("keypair repository not configured")
+	}
+	if req.Name == "" {
+		return nil, fmt.Errorf("keypair name is required")
+	}
+	if req.PublicKey == "" {
+		return nil, fmt.Errorf("public_key is required")
+	}
+	if !strings.Contains(req.PublicKey, "ssh-") {
+		return nil, fmt.Errorf("invalid public key format")
+	}
+	orgID := req.OrganizationID
+	if orgID == "" || orgID == "default" {
+		orgID = "00000000-0000-0000-0000-000000000000"
+	}
+	existing, _ := s.keypairRepo.GetByName(ctx, req.Name, orgID)
+	if existing != nil {
+		return nil, fmt.Errorf("keypair with name %q already exists", req.Name)
+	}
+	k := &domain.Keypair{
+		ID:             uuid.New().String(),
+		Name:           req.Name,
+		PublicKey:      req.PublicKey,
+		Fingerprint:    fingerprintPublicKey(req.PublicKey),
+		OrganizationID: orgID,
+	}
+	if err := s.keypairRepo.Create(ctx, k); err != nil {
+		return nil, fmt.Errorf("create keypair: %w", err)
+	}
+	return k, nil
+}
+
+func (s *Service) GetKeypair(ctx context.Context, id string) (*domain.Keypair, error) {
+	if s.keypairRepo == nil {
+		return nil, fmt.Errorf("keypair repository not configured")
+	}
+	return s.keypairRepo.GetByID(ctx, id)
+}
+
+func (s *Service) ListKeypairs(ctx context.Context, orgID string) ([]*domain.Keypair, error) {
+	if s.keypairRepo == nil {
+		return nil, fmt.Errorf("keypair repository not configured")
+	}
+	return s.keypairRepo.List(ctx, orgID)
+}
+
+func (s *Service) DeleteKeypair(ctx context.Context, id string) error {
+	if s.keypairRepo == nil {
+		return fmt.Errorf("keypair repository not configured")
+	}
+	k, err := s.keypairRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if k == nil {
+		return fmt.Errorf("keypair not found")
+	}
+	return s.keypairRepo.Delete(ctx, id)
 }
 
 func (s *Service) ListBackups(ctx context.Context, filter domain.BackupFilter) ([]*domain.Backup, int, error) {

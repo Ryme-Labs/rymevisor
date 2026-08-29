@@ -171,13 +171,55 @@ func (m *Manager) GetVMStatus(ctx context.Context, vmID string) (string, error) 
 }
 
 func (m *Manager) CreateDisk(ctx context.Context, vmID, name string, sizeBytes int64) (string, error) {
+	return m.CreateDiskFromImage(ctx, vmID, name, sizeBytes, "")
+}
+
+func (m *Manager) CreateDiskFromImage(ctx context.Context, vmID, name string, sizeBytes int64, imagePath string) (string, error) {
 	dir := m.vmDir(vmID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("create vm dir: %w", err)
 	}
 
 	path := filepath.Join(dir, fmt.Sprintf("%s.qcow2", name))
+
+	// If imagePath provided and exists, create with backing file
+	if imagePath != "" {
+		if _, err := os.Stat(imagePath); err == nil {
+			// Try to detect backing format
+			backingFmt := "qcow2"
+			if out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", imagePath).CombinedOutput(); err == nil {
+				// Parse JSON to get format, fallback to qcow2
+				var info struct {
+					Format string `json:"format"`
+				}
+				_ = json.Unmarshal(out, &info)
+				if info.Format != "" {
+					backingFmt = info.Format
+				}
+			} else if filepath.Ext(imagePath) == ".img" {
+				backingFmt = "raw"
+			}
+
+			cmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", "-b", imagePath, "-F", backingFmt, path)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				return "", fmt.Errorf("qemu-img create with backing %s: %w: %s", imagePath, err, string(output))
+			}
+			// Resize to requested size if larger than backing image
+			if sizeBytes > 0 {
+				sizeGB := float64(sizeBytes) / (1024 * 1024 * 1024)
+				sizeStr := fmt.Sprintf("%.1fG", sizeGB)
+				resizeCmd := exec.CommandContext(ctx, "qemu-img", "resize", path, sizeStr)
+				_, _ = resizeCmd.CombinedOutput() // ignore error, not critical
+			}
+			return path, nil
+		}
+	}
+
 	sizeGB := float64(sizeBytes) / (1024 * 1024 * 1024)
+	if sizeGB < 0.1 {
+		sizeGB = 0.1
+	}
 	sizeStr := fmt.Sprintf("%.1fG", sizeGB)
 
 	cmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", path, sizeStr)
