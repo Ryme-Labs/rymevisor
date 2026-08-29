@@ -88,6 +88,8 @@ func (h *Handler) Routes() chi.Router {
 		r.Get("/metrics", h.HandleMetrics)
 		r.Get("/metrics/{id}", h.HandleMetrics)
 		r.Get("/metrics/vm/{id}", h.HandleMetrics)
+		r.Get("/vm/{id}/state", h.HandleVMStateWs)
+		r.Get("/vm/{id}/logs", h.HandleWsLogs)
 	})
 
 	return r

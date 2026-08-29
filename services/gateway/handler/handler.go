@@ -35,11 +35,15 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 	r.Get("/ws/console", g.HandleConsole)
 	r.Get("/ws/metrics", g.HandleMetrics)
 	r.Get("/ws/metrics/vm/{id}", g.HandleMetrics)
+	r.Get("/ws/vm/{id}/state", g.HandleVMState)
+	r.Get("/ws/vm/{id}/logs", g.HandleLogs)
 	r.Get("/api/v1/ws/logs", g.HandleLogs)
 	r.Get("/api/v1/ws/console", g.HandleConsole)
 	r.Get("/api/v1/ws/console/{id}", g.HandleConsole)
 	r.Get("/api/v1/ws/metrics", g.HandleMetrics)
 	r.Get("/api/v1/ws/metrics/vm/{id}", g.HandleMetrics)
+	r.Get("/api/v1/ws/vm/{id}/state", g.HandleVMState)
+	r.Get("/api/v1/ws/vm/{id}/logs", g.HandleLogs)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/vms", func(r chi.Router) {
