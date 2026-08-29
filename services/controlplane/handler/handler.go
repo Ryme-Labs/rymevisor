@@ -81,6 +81,12 @@ func (h *Handler) Routes() chi.Router {
 		r.Post("/{id}/restore", h.RestoreBackup)
 	})
 
+	r.Route("/ws", func(r chi.Router) {
+		r.Get("/logs", h.HandleWsLogs)
+		r.Get("/console", h.HandleWsConsole)
+		r.Get("/console/{id}", h.HandleWsConsole)
+	})
+
 	return r
 }
 

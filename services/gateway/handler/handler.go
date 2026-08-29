@@ -30,6 +30,13 @@ func NewGateway(cfg ServiceConfig) *Gateway {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	// WebSocket endpoints (same API key via header X-API-Key or ?api_key=)
+	r.Get("/ws/logs", g.HandleLogs)
+	r.Get("/ws/console", g.HandleConsole)
+	r.Get("/api/v1/ws/logs", g.HandleLogs)
+	r.Get("/api/v1/ws/console", g.HandleConsole)
+	r.Get("/api/v1/ws/console/{id}", g.HandleConsole)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Route("/vms", func(r chi.Router) {
 			r.Post("/", g.proxy(cfg.ControlPlaneURL))

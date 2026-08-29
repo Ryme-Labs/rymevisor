@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -46,7 +47,8 @@ func CORS() func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-API-Key, X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, X-API-Key, X-Request-ID, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 
 			if r.Method == http.MethodOptions {
@@ -106,6 +108,11 @@ func RequireAPIKey(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Allow websocket upgrade without API key check here if handler does its own check via query
+		// But we still enforce for all /api and /ws paths
+		if r.Header.Get("Upgrade") == "websocket" && r.URL.Path == "/ws/logs" {
+			// Let ws handler handle auth via query param as well
+		}
 
 		validKey := os.Getenv("RYMEVISOR_API_KEY")
 		if validKey == "" {
@@ -118,6 +125,29 @@ func RequireAPIKey(next http.Handler) http.Handler {
 		provided := r.Header.Get("X-API-Key")
 		if provided == "" {
 			provided = r.URL.Query().Get("api_key")
+		}
+		if provided == "" {
+			provided = r.URL.Query().Get("token")
+		}
+		if provided == "" {
+			provided = r.URL.Query().Get("key")
+		}
+		if provided == "" {
+			// Try Sec-WebSocket-Protocol header which browsers can set for ws auth
+			if proto := r.Header.Get("Sec-WebSocket-Protocol"); proto != "" {
+				// Protocol header may contain comma-separated values, check each
+				for _, p := range splitAndTrim(proto, ",") {
+					if p == validKey {
+						provided = p
+						break
+					}
+					// Also allow "Bearer <key>" style
+					if len(p) > 7 && p[:7] == "Bearer " && p[7:] == validKey {
+						provided = validKey
+						break
+					}
+				}
+			}
 		}
 
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(validKey)) != 1 {
@@ -134,6 +164,34 @@ func RequireAPIKey(next http.Handler) http.Handler {
 func GetAPIKeyID(ctx context.Context) string {
 	if v, ok := ctx.Value(APIKeyIDKey).(string); ok {
 		return v
+	}
+	return ""
+}
+
+func splitAndTrim(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// ExtractAPIKey extracts API key from request (header or query) for websocket handlers.
+func ExtractAPIKey(r *http.Request) string {
+	if k := r.Header.Get("X-API-Key"); k != "" {
+		return k
+	}
+	if k := r.URL.Query().Get("api_key"); k != "" {
+		return k
+	}
+	if k := r.URL.Query().Get("token"); k != "" {
+		return k
+	}
+	if k := r.URL.Query().Get("key"); k != "" {
+		return k
 	}
 	return ""
 }
