@@ -15,7 +15,6 @@ type Config struct {
 	APIKey   string         `yaml:"-"`
 	Storage  StorageConfig  `yaml:"storage"`
 	Logging  LoggingConfig  `yaml:"logging"`
-	Tracing  TracingConfig  `yaml:"tracing"`
 	Node     NodeConfig     `yaml:"node"`
 }
 
@@ -50,11 +49,6 @@ type StorageConfig struct {
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
-}
-
-type TracingConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Endpoint string `yaml:"endpoint"`
 }
 
 type NodeConfig struct {
@@ -93,10 +87,6 @@ func Load() (*Config, error) {
 		Logging: LoggingConfig{
 			Level:  envOrDefault("RYMEVISOR_LOG_LEVEL", "info"),
 			Format: envOrDefault("RYMEVISOR_LOG_FORMAT", "json"),
-		},
-		Tracing: TracingConfig{
-			Enabled:  envBoolOrDefault("RYMEVISOR_TRACING_ENABLED", false),
-			Endpoint: envOrDefault("RYMEVISOR_TRACING_ENDPOINT", "localhost:4318"),
 		},
 		Node: NodeConfig{
 			ID:           envOrDefault("RYMEVISOR_NODE_ID", ""),

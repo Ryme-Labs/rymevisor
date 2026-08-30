@@ -91,24 +91,6 @@ services:
       nats:
         condition: service_healthy
 
-  auth-service:
-    build:
-      context: ../../
-      dockerfile: deployments/docker/Dockerfile.service
-      args:
-        SERVICE: auth-service
-    ports:
-      - "8082:8080"
-    environment:
-      RYMEVISOR_SERVER_ADDR: ":8080"
-      RYMEVISOR_DATABASE_URL: "postgres://rymevisor:rymevisor@postgres:5432/rymevisor?sslmode=disable"
-      RYMEVISOR_JWT_SECRET: "dev-secret-change-in-production"
-      RYMEVISOR_LOG_LEVEL: "debug"
-      RYMEVISOR_LOG_FORMAT: "console"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
   scheduler:
     build:
       context: ../../
