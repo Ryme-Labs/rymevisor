@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rymelabs/rymevisor/internal/jsonutil"
 	"github.com/rymelabs/rymevisor/services/network"
 	"github.com/rymelabs/rymevisor/services/network/domain"
 )
@@ -35,30 +36,20 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/v1/floating-ips/{id}", h.ReleaseFloatingIP)
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
 func (h *Handler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateNetworkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	net, err := h.svc.CreateNetwork(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, net)
+	jsonutil.WriteJSON(w, http.StatusCreated, net)
 }
 
 func (h *Handler) GetNetwork(w http.ResponseWriter, r *http.Request) {
@@ -66,11 +57,11 @@ func (h *Handler) GetNetwork(w http.ResponseWriter, r *http.Request) {
 
 	net, err := h.svc.GetNetwork(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		jsonutil.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, net)
+	jsonutil.WriteJSON(w, http.StatusOK, net)
 }
 
 func (h *Handler) ListNetworks(w http.ResponseWriter, r *http.Request) {
@@ -91,11 +82,11 @@ func (h *Handler) ListNetworks(w http.ResponseWriter, r *http.Request) {
 		PerPage:        perPage,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		jsonutil.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"networks": networks,
 		"total":    total,
 		"page":     page,
@@ -107,11 +98,11 @@ func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.DeleteNetwork(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "network deleted"})
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]string{"message": "network deleted"})
 }
 
 func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
@@ -123,28 +114,28 @@ func (h *Handler) CreateSubnet(w http.ResponseWriter, r *http.Request) {
 		DHCP bool   `json:"dhcp"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	subnet, err := h.svc.CreateSubnet(r.Context(), networkID, req.Name, req.CIDR, req.DHCP)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, subnet)
+	jsonutil.WriteJSON(w, http.StatusCreated, subnet)
 }
 
 func (h *Handler) DeleteSubnet(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.DeleteSubnet(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "subnet deleted"})
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]string{"message": "subnet deleted"})
 }
 
 func (h *Handler) CreateFirewallRule(w http.ResponseWriter, r *http.Request) {
@@ -152,29 +143,29 @@ func (h *Handler) CreateFirewallRule(w http.ResponseWriter, r *http.Request) {
 
 	var req domain.CreateFirewallRuleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.NetworkID = networkID
 
 	rule, err := h.svc.CreateFirewallRule(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, rule)
+	jsonutil.WriteJSON(w, http.StatusCreated, rule)
 }
 
 func (h *Handler) DeleteFirewallRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.DeleteFirewallRule(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "firewall rule deleted"})
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]string{"message": "firewall rule deleted"})
 }
 
 func (h *Handler) AllocateFloatingIP(w http.ResponseWriter, r *http.Request) {
@@ -183,38 +174,38 @@ func (h *Handler) AllocateFloatingIP(w http.ResponseWriter, r *http.Request) {
 		VMID      string `json:"vm_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	fip, err := h.svc.AllocateFloatingIP(r.Context(), req.NetworkID, req.VMID)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, fip)
+	jsonutil.WriteJSON(w, http.StatusCreated, fip)
 }
 
 func (h *Handler) ReleaseFloatingIP(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.ReleaseFloatingIP(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "floating IP released"})
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]string{"message": "floating IP released"})
 }
 
 func (h *Handler) ListFloatingIPs(w http.ResponseWriter, r *http.Request) {
 	ips, err := h.svc.ListFloatingIPs(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		jsonutil.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"floating_ips": ips,
 		"total":        len(ips),
 	})

@@ -9,16 +9,14 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Database   DatabaseConfig   `yaml:"database"`
-	Redis      RedisConfig      `yaml:"redis"`
-	NATS       NATSConfig       `yaml:"nats"`
-	APIKey     string           `yaml:"-"`
-	Storage    StorageConfig    `yaml:"storage"`
-	Logging    LoggingConfig    `yaml:"logging"`
-	Tracing    TracingConfig    `yaml:"tracing"`
-	Node       NodeConfig       `yaml:"node"`
-	Monitoring MonitoringConfig `yaml:"monitoring"`
+	Server   ServerConfig   `yaml:"server"`
+	Database DatabaseConfig `yaml:"database"`
+	NATS     NATSConfig     `yaml:"nats"`
+	APIKey   string         `yaml:"-"`
+	Storage  StorageConfig  `yaml:"storage"`
+	Logging  LoggingConfig  `yaml:"logging"`
+	Tracing  TracingConfig  `yaml:"tracing"`
+	Node     NodeConfig     `yaml:"node"`
 }
 
 type ServerConfig struct {
@@ -34,12 +32,6 @@ type DatabaseConfig struct {
 	MaxOpenConns    int           `yaml:"max_open_conns"`
 	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
-}
-
-type RedisConfig struct {
-	Addr     string `yaml:"addr"`
-	Password string `yaml:"password"`
-	DB       int    `yaml:"db"`
 }
 
 type NATSConfig struct {
@@ -71,11 +63,6 @@ type NodeConfig struct {
 	HeartbeatInt time.Duration `yaml:"heartbeat_interval"`
 }
 
-type MonitoringConfig struct {
-	PrometheusEnabled bool   `yaml:"prometheus_enabled"`
-	MetricsPath       string `yaml:"metrics_path"`
-}
-
 func Load() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
@@ -90,11 +77,6 @@ func Load() (*Config, error) {
 			MaxOpenConns:    envIntOrDefault("RYMEVISOR_DATABASE_MAX_OPEN_CONNS", 25),
 			MaxIdleConns:    envIntOrDefault("RYMEVISOR_DATABASE_MAX_IDLE_CONNS", 10),
 			ConnMaxLifetime: envDurationOrDefault("RYMEVISOR_DATABASE_CONN_MAX_LIFETIME", 5*time.Minute),
-		},
-		Redis: RedisConfig{
-			Addr:     envOrDefault("RYMEVISOR_REDIS_ADDR", "localhost:6379"),
-			Password: envOrDefault("RYMEVISOR_REDIS_PASSWORD", ""),
-			DB:       envIntOrDefault("RYMEVISOR_REDIS_DB", 0),
 		},
 		NATS: NATSConfig{
 			URL:           envOrDefault("RYMEVISOR_NATS_URL", "nats://localhost:4222"),
@@ -121,10 +103,6 @@ func Load() (*Config, error) {
 			Labels:       strings.Split(envOrDefault("RYMEVISOR_NODE_LABELS", ""), ","),
 			HeartbeatInt: envDurationOrDefault("RYMEVISOR_NODE_HEARTBEAT", 10*time.Second),
 		},
-		Monitoring: MonitoringConfig{
-			PrometheusEnabled: envBoolOrDefault("RYMEVISOR_PROMETHEUS_ENABLED", true),
-			MetricsPath:       envOrDefault("RYMEVISOR_METRICS_PATH", "/metrics"),
-		},
 	}
 
 	return cfg, nil
@@ -135,6 +113,11 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+
+func EnvOrDefault(key, fallback string) string {
+	return envOrDefault(key, fallback)
 }
 
 func envIntOrDefault(key string, fallback int) int {

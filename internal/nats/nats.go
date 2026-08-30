@@ -34,7 +34,7 @@ func Connect(ctx context.Context, cfg config.NATSConfig) (jetstream.JetStream, e
 		return nil, fmt.Errorf("nats: jetstream: %w", err)
 	}
 
-	// Ensure required streams exist
+
 	if err := ensureStreams(ctx, js); err != nil {
 		nc.Close()
 		return nil, fmt.Errorf("nats: ensure streams: %w", err)
@@ -51,23 +51,33 @@ func ensureStreams(ctx context.Context, js jetstream.JetStream) error {
 			Storage:   jetstream.FileStorage,
 			Retention: jetstream.LimitsPolicy,
 			MaxAge:    24 * time.Hour,
+			MaxBytes:  500 * 1024 * 1024,
+			Discard:   jetstream.DiscardOld,
+			MaxMsgSize: 4 * 1024 * 1024,
 		},
 		{
 			Name:      "COMMANDS",
 			Subjects:  []string{"commands.>"},
 			Storage:   jetstream.FileStorage,
 			Retention: jetstream.WorkQueuePolicy,
-			MaxAge:    1 * time.Hour,
+			MaxAge:    7 * 24 * time.Hour,
+			MaxMsgs:   100000,
+			Discard:   jetstream.DiscardOld,
+			MaxMsgSize: 1 * 1024 * 1024,
 		},
 		{
 			Name:      "HEARTBEATS",
 			Subjects:  []string{"heartbeats.>"},
 			Storage:   jetstream.MemoryStorage,
 			Retention: jetstream.LimitsPolicy,
-			MaxAge:    30 * time.Second,
-			MaxMsgs:   1000,
+			MaxAge:    60 * time.Second,
+			MaxMsgs:   5000,
+			Discard:   jetstream.DiscardOld,
+			MaxMsgSize: 64 * 1024,
 		},
 	}
+
+
 
 	for _, cfg := range streams {
 		if _, err := js.CreateOrUpdateStream(ctx, cfg); err != nil {

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,14 +9,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/gorilla/websocket"
+	ws "github.com/rymelabs/rymevisor/internal/ws"
 )
 
-var vmStateUpgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+var vmStateUpgrader = ws.Upgrader
 
 func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 	if !cpWsAuth(r) {
@@ -37,15 +32,7 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol := r.Header.Get("Sec-WebSocket-Protocol")
-	var responseHeader http.Header
-	if protocol != "" {
-		validKey := os.Getenv("RYMEVISOR_API_KEY")
-		if strings.Contains(protocol, validKey) {
-			responseHeader = http.Header{}
-			responseHeader.Set("Sec-WebSocket-Protocol", validKey)
-		}
-	}
+	responseHeader := ws.AuthResponseHeader(r)
 
 	conn, err := vmStateUpgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
@@ -53,23 +40,9 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
-		}
-	}()
+	ws.SetupPingPong(conn)
 
-	// Send initial connected
+
 	_ = conn.WriteJSON(map[string]interface{}{
 		"type":      "connected",
 		"vm_id":     vmID,
@@ -77,7 +50,7 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Unix(),
 	})
 
-	// Poll VM status and image status, stream changes
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -106,11 +79,11 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 					"vm_id":     vmID,
 					"timestamp": time.Now().Unix(),
 				})
-				// Keep polling in case it appears later, but also check dead
+
 				continue
 			}
 
-			// Send status if changed or first time
+
 			status := string(vm.Status)
 			if status != lastStatus {
 				_ = conn.WriteJSON(map[string]interface{}{
@@ -125,7 +98,7 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 				})
 				lastStatus = status
 			} else {
-				// Periodic heartbeat with current state
+
 				_ = conn.WriteJSON(map[string]interface{}{
 					"type":      "state",
 					"vm_id":     vmID,
@@ -134,7 +107,7 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 
-			// If VM has image, check image status
+
 			for _, disk := range vm.Disks {
 				if disk.ImageID != "" {
 					img, err := h.svc.GetImage(r.Context(), disk.ImageID)
@@ -154,25 +127,25 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 							})
 							lastImageStatus = imgStatus
 						}
-						// If image is downloading, also stream download progress via file size
+
 						if img.Status == "downloading" || img.Status == "processing" {
 							imagePath := filepath.Join("/var/lib/rymevisor/images", disk.ImageID+".qcow2")
 							if fi, err := os.Stat(imagePath + ".tmp"); err == nil {
 								_ = conn.WriteJSON(map[string]interface{}{
-									"type":      "image_progress",
-									"vm_id":     vmID,
-									"image_id":  disk.ImageID,
+									"type":             "image_progress",
+									"vm_id":            vmID,
+									"image_id":         disk.ImageID,
 									"bytes_downloaded": fi.Size(),
-									"timestamp": time.Now().Unix(),
+									"timestamp":        time.Now().Unix(),
 								})
 							} else if fi, err := os.Stat(imagePath); err == nil {
 								_ = conn.WriteJSON(map[string]interface{}{
-									"type":      "image_progress",
-									"vm_id":     vmID,
-									"image_id":  disk.ImageID,
+									"type":             "image_progress",
+									"vm_id":            vmID,
+									"image_id":         disk.ImageID,
 									"bytes_downloaded": fi.Size(),
-									"complete":  true,
-									"timestamp": time.Now().Unix(),
+									"complete":         true,
+									"timestamp":        time.Now().Unix(),
 								})
 							}
 						}
@@ -181,7 +154,7 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Stream VM-specific log file tail (if exists)
+
 			logPaths := []string{
 				filepath.Join("/var/lib/rymevisor/vms", vmID, "qemu.log"),
 				filepath.Join("/var/lib/rymevisor/vms", vmID, "console.log"),
@@ -191,7 +164,7 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 			for _, lp := range logPaths {
 				if fi, err := os.Stat(lp); err == nil {
 					if fi.Size() > lastLogOffset {
-						// Read new log lines
+
 						f, err := os.Open(lp)
 						if err == nil {
 							_, _ = f.Seek(lastLogOffset, 0)
@@ -220,8 +193,8 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Also stream control-plane log for this VM (grep vm_id)
-			// For now, just send a periodic log count
+
+
 			_ = conn.WriteJSON(map[string]interface{}{
 				"type":      "heartbeat",
 				"vm_id":     vmID,
@@ -230,16 +203,4 @@ func (h *Handler) HandleVMStateWs(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-}
-
-// Helper to check auth for VM state ws (reuses cpWsAuth logic)
-func vmStateAuth(r *http.Request) bool {
-	return cpWsAuth(r)
-}
-
-// Ensure the handler is wired
-func init() {
-	// Ensure imports are used
-	_ = json.Marshal
-	_ = chi.URLParam
 }

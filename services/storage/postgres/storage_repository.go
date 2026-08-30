@@ -10,6 +10,14 @@ import (
 	"github.com/rymelabs/rymevisor/services/storage/domain"
 )
 
+
+
+
+
+
+
+
+
 type StoragePoolRepository struct {
 	pool *pgxpool.Pool
 }
@@ -77,6 +85,18 @@ func (r *StoragePoolRepository) List(ctx context.Context) ([]*domain.StoragePool
 		pools = append(pools, p)
 	}
 	return pools, rows.Err()
+}
+
+func (r *StoragePoolRepository) Update(ctx context.Context, p *domain.StoragePool) error {
+	configJSON, err := json.Marshal(p.Config)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	_, err = r.pool.Exec(ctx,
+		`UPDATE storage_pools SET name=$2, driver=$3, path=$4, total_bytes=$5, used_bytes=$6, encrypted=$7, config=$8, updated_at=now() WHERE id=$1`,
+		p.ID, p.Name, p.Driver, p.Path, p.TotalBytes, p.UsedBytes, p.Encrypted, configJSON,
+	)
+	return err
 }
 
 type VolumeRepository struct {
@@ -151,21 +171,34 @@ func (r *VolumeRepository) listSnapshots(ctx context.Context, volumeID string) (
 }
 
 func (r *VolumeRepository) List(ctx context.Context, filter domain.VolumeFilter) ([]*domain.Volume, int, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PerPage < 1 {
+		filter.PerPage = 20
+	}
+	where := ""
+	args := []any{}
+	argIdx := 1
+	if filter.PoolID != "" {
+		where = fmt.Sprintf(" WHERE pool_id = $%d::uuid", argIdx)
+		args = append(args, filter.PoolID)
+		argIdx++
+	}
 	var total int
-	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM volumes`,
-	).Scan(&total)
+	countQuery := "SELECT COUNT(*) FROM volumes" + where
+	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	offset := (filter.Page - 1) * filter.PerPage
-	rows, err := r.pool.Query(ctx,
-		`SELECT id, name, pool_id, size_bytes, used_bytes, status, encrypted, labels, created_at, updated_at
-		 FROM volumes
-		 ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-		filter.PerPage, offset,
-	)
+	dataArgs := append([]any{}, args...)
+	dataArgs = append(dataArgs, filter.PerPage, offset)
+	listQuery := fmt.Sprintf(`SELECT id, name, pool_id, size_bytes, used_bytes, status, encrypted, labels, created_at, updated_at
+		 FROM volumes%s
+		 ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+	rows, err := r.pool.Query(ctx, listQuery, dataArgs...)
 	if err != nil {
 		return nil, 0, err
 	}

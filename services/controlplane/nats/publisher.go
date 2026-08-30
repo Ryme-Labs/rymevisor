@@ -24,11 +24,14 @@ func (p *EventPublisher) Publish(ctx context.Context, subject string, data []byt
 }
 
 func (p *EventPublisher) PublishVMEvent(ctx context.Context, eventType, vmID string, data []byte) error {
-	subject := fmt.Sprintf("events.vm.%s.%s", eventType, vmID)
+
+
+	subject := fmt.Sprintf("events.vm.%s.%s", vmID, eventType)
 	return p.Publish(ctx, subject, data)
 }
 
 func (p *EventPublisher) PublishNodeEvent(ctx context.Context, eventType, nodeID string, data []byte) error {
-	subject := fmt.Sprintf("events.node.%s.%s", eventType, nodeID)
+
+	subject := fmt.Sprintf("events.node.%s.%s", nodeID, eventType)
 	return p.Publish(ctx, subject, data)
 }

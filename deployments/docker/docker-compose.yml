@@ -16,18 +16,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   nats:
     image: nats:2.10-alpine
     command: ["--jetstream", "--store_dir", "/data"]
@@ -71,7 +59,6 @@ services:
       RYMEVISOR_SERVER_ADDR: ":8080"
       RYMEVISOR_DATABASE_URL: "postgres://rymevisor:rymevisor@postgres:5432/rymevisor?sslmode=disable"
       RYMEVISOR_NATS_URL: "nats://nats:4222"
-      RYMEVISOR_REDIS_ADDR: "redis:6379"
       RYMEVISOR_JWT_SECRET: "dev-secret-change-in-production"
       RYMEVISOR_LOG_LEVEL: "debug"
       RYMEVISOR_LOG_FORMAT: "console"
@@ -81,8 +68,6 @@ services:
       postgres:
         condition: service_healthy
       nats:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   api-gateway:
@@ -180,7 +165,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   nats_data:
   minio_data:
   rymevisor_data:

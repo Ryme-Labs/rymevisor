@@ -2,9 +2,10 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rymelabs/rymevisor/services/network/domain"
@@ -62,74 +63,115 @@ func (r *FloatingIPRepository) FindAvailableIP(ctx context.Context, networkCIDR 
 	if err != nil {
 		return "", fmt.Errorf("invalid CIDR: %w", err)
 	}
+	ip4 := ipNet.IP.To4()
+	if ip4 == nil {
+		return "", fmt.Errorf("only IPv4 CIDR supported, got %q", networkCIDR)
+	}
+	mask := binary.BigEndian.Uint32(ipNet.Mask)
+	network := binary.BigEndian.Uint32(ip4)
+	broadcast := network | ^mask
+	if broadcast-network <= 2 {
+		return "", fmt.Errorf("no available IPs in network %s (prefix too small)", networkCIDR)
+	}
+	gwInt := network + 1
 
-	usedIPs := make(map[string]bool)
-	rows, err := r.pool.Query(ctx,
-		`SELECT ip_address::text FROM floating_ips`,
-	)
+
+	query := `SELECT ip_address::text FROM floating_ips WHERE ip_address <<= $1::cidr`
+	args := []any{networkCIDR}
+	if organizationID != "" {
+		query += ` AND organization_id = $2::uuid`
+		args = append(args, organizationID)
+	}
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return "", err
 	}
 	defer rows.Close()
 
+	usedSet := make(map[uint32]bool)
 	for rows.Next() {
 		var ipAddr string
 		if err := rows.Scan(&ipAddr); err != nil {
 			return "", err
 		}
-		if ip, _, err := net.ParseCIDR(ipAddr + "/32"); err == nil {
-			usedIPs[ip.String()] = true
-		} else if ip := net.ParseIP(ipAddr); ip != nil {
-			usedIPs[ip.String()] = true
+		ipStr := ipAddr
+		if strings.Contains(ipStr, "/") {
+			if parsed, _, err := net.ParseCIDR(ipStr); err == nil {
+				ipStr = parsed.String()
+			}
+		}
+		if ip := net.ParseIP(ipStr); ip != nil {
+			if v4 := ip.To4(); v4 != nil {
+				usedSet[binary.BigEndian.Uint32(v4)] = true
+			}
+		} else if ip, _, err := net.ParseCIDR(ipAddr); err == nil {
+			if v4 := ip.To4(); v4 != nil {
+				usedSet[binary.BigEndian.Uint32(v4)] = true
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
 
-	ip := ipNet.IP.To4()
-	if ip == nil {
-		ip = ipNet.IP.To16()
-	}
-	ip = ip.To4()
 
-	startIP := make(net.IP, len(ip))
-	copy(startIP, ip)
+	usedSet[network] = true
+	usedSet[gwInt] = true
+	usedSet[broadcast] = true
 
-	for i := int(startIP[len(startIP)-1]); i < 255; i++ {
-		candidate := make(net.IP, len(startIP))
-		copy(candidate, startIP)
-		candidate[len(candidate)-1] = byte(i)
 
-		if !ipNet.Contains(candidate) {
+	for candidate := network + 2; candidate < broadcast; candidate++ {
+		if usedSet[candidate] {
 			continue
 		}
-		if i == 0 || i == 255 {
-			continue
-		}
-		if candidate.String() == ipNet.IP.String() {
-			continue
-		}
-		gw := make(net.IP, len(ipNet.IP.To4()))
-		copy(gw, ipNet.IP.To4())
-		gw[len(gw)-1] = byte(1)
-		if candidate.Equal(gw) {
+		candidateIP := make(net.IP, 4)
+		binary.BigEndian.PutUint32(candidateIP, candidate)
+		if !ipNet.Contains(candidateIP) {
 			continue
 		}
 
-		if !usedIPs[candidate.String()] {
-			var count int
-			err := r.pool.QueryRow(ctx,
-				`SELECT COUNT(*) FROM floating_ips WHERE ip_address = $1::inet`, candidate.String(),
-			).Scan(&count)
-			if err != nil && err != sql.ErrNoRows {
-				return "", err
-			}
-			if count == 0 {
-				return candidate.String(), nil
-			}
-		}
+		return candidateIP.String(), nil
 	}
 
 	return "", fmt.Errorf("no available IPs in network %s", networkCIDR)
+}
+
+
+
+
+
+
+
+func (r *FloatingIPRepository) findAvailableIPSQL(ctx context.Context, networkCIDR string, organizationID string) (string, error) {
+	_, ipNet, err := net.ParseCIDR(networkCIDR)
+	if err != nil {
+		return "", fmt.Errorf("invalid CIDR: %w", err)
+	}
+	ones, bits := ipNet.Mask.Size()
+	if bits != 32 {
+		return "", fmt.Errorf("only IPv4 CIDR supported, got %q", networkCIDR)
+	}
+	hostBits := 32 - ones
+	if hostBits < 2 {
+		return "", fmt.Errorf("no available IPs in network %s", networkCIDR)
+	}
+	maxHosts := (1 << hostBits) - 2
+
+	query := `
+		SELECT host($1::cidr + s)::text
+		FROM generate_series(2, $2::int) AS s
+		WHERE host($1::cidr + s)::inet NOT IN (SELECT ip_address FROM floating_ips WHERE ip_address <<= $1::cidr`
+	args := []any{networkCIDR, maxHosts}
+	if organizationID != "" {
+		query += ` AND organization_id = $3::uuid`
+		args = append(args, organizationID)
+	}
+	query += `)
+		LIMIT 1`
+	var ip string
+	err = r.pool.QueryRow(ctx, query, args...).Scan(&ip)
+	if err != nil {
+		return "", fmt.Errorf("no available IPs in network %s: %w", networkCIDR, err)
+	}
+	return ip, nil
 }

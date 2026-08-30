@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"github.com/rymelabs/rymevisor/internal/hostinfo"
+	"github.com/rymelabs/rymevisor/internal/ipam"
+	"github.com/rymelabs/rymevisor/internal/mac"
+	inats "github.com/rymelabs/rymevisor/internal/nats"
 	"github.com/rymelabs/rymevisor/services/controlplane/domain"
 	"github.com/rymelabs/rymevisor/services/nodeagent/cloudinit"
 	"github.com/rymelabs/rymevisor/services/nodeagent/qemu"
@@ -51,17 +55,28 @@ type VMCommand struct {
 	Force  bool            `json:"force,omitempty"`
 }
 
-type VMStartConfig struct {
-	Name       string `json:"name"`
-	VCPUs      int32  `json:"vcpus"`
-	MemoryMB   int64  `json:"memory_mb"`
-	DiskPath   string `json:"disk_path"`
+type NICConfig struct {
+	NetworkID  string `json:"network_id"`
 	MACAddress string `json:"mac_address"`
-	SSHKey     string `json:"ssh_key,omitempty"`
-	ImageURL   string `json:"image_url,omitempty"`
-	ImageID    string `json:"image_id,omitempty"`
-	ImagePath  string `json:"image_path,omitempty"`
-	SizeBytes  int64  `json:"size_bytes,omitempty"`
+	IPAddress  string `json:"ip_address"`
+	Gateway    string `json:"gateway,omitempty"`
+	Bridge     string `json:"bridge,omitempty"`
+	Name       string `json:"name,omitempty"`
+}
+
+type VMStartConfig struct {
+	Name              string      `json:"name"`
+	VCPUs             int32       `json:"vcpus"`
+	MemoryMB          int64       `json:"memory_mb"`
+	DiskPath          string      `json:"disk_path"`
+	MACAddress        string      `json:"mac_address"`
+	SSHKey            string      `json:"ssh_key,omitempty"`
+	ImageURL          string      `json:"image_url,omitempty"`
+	ImageID           string      `json:"image_id,omitempty"`
+	ImagePath         string      `json:"image_path,omitempty"`
+	SizeBytes         int64       `json:"size_bytes,omitempty"`
+	MachineType       string      `json:"machine_type,omitempty"`
+	NetworkInterfaces []NICConfig `json:"network_interfaces,omitempty"`
 }
 
 type VMCommandResult struct {
@@ -103,7 +118,6 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 	if diskPath == "" {
 		diskPath = filepath.Join(vmDir, "root.qcow2")
 		if _, err := os.Stat(diskPath); os.IsNotExist(err) {
-			// Determine backing image if provided
 			imagePath := ""
 			if cfg.ImagePath != "" {
 				imagePath = cfg.ImagePath
@@ -112,13 +126,11 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 				if _, err := os.Stat(candidate); err == nil {
 					imagePath = candidate
 				} else {
-					// Try without extension or with raw
 					if _, err := os.Stat(filepath.Join(a.ImagesDir(), cfg.ImageID+".raw")); err == nil {
 						imagePath = filepath.Join(a.ImagesDir(), cfg.ImageID+".raw")
 					}
 				}
 			} else if cfg.ImageURL != "" {
-				// Fallback: try to find by URL hash? For now, ignore
 				a.logger.Warn("image_url provided but not handled on node-agent, creating empty disk", zap.String("url", cfg.ImageURL))
 			}
 			sizeBytes := cfg.SizeBytes
@@ -148,12 +160,64 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 		}
 	}
 
+
+	var nics []NICConfig
+	if len(cfg.NetworkInterfaces) > 0 {
+
+		nics = cfg.NetworkInterfaces
+
+		for i := range nics {
+			if nics[i].Bridge == "" {
+				br, err := ipam.BridgeForNetwork(nics[i].NetworkID)
+				if err != nil {
+					return fmt.Errorf("bridge for network %s: %w", nics[i].NetworkID, err)
+				}
+				nics[i].Bridge = br
+			}
+			if nics[i].Gateway == "" && nics[i].IPAddress != "" {
+				if gw, err := gatewayFromCIDR(nics[i].IPAddress); err == nil {
+					nics[i].Gateway = gw
+				}
+			}
+			if nics[i].Name == "" {
+				nics[i].Name = fmt.Sprintf("ens%d", 3+i)
+			}
+			if nics[i].MACAddress == "" {
+				nics[i].MACAddress = mac.GenerateNICMAC(vmID, fmt.Sprintf("nic-%d", i))
+			}
+
+			if err := qemu.EnsureBridge(nics[i].Bridge, nics[i].Gateway, nics[i].IPAddress); err != nil {
+				a.logger.Warn("ensure bridge failed (non-root ?)", zap.Error(err), zap.String("bridge", nics[i].Bridge))
+			}
+		}
+	} else {
+		return fmt.Errorf("no network interfaces provided")
+	}
+
+
+	var netIfaces []cloudinit.NetworkInterface
+	for _, n := range nics {
+		cidr := n.IPAddress
+		if cidr == "" {
+			continue
+		}
+		netIfaces = append(netIfaces, cloudinit.NetworkInterface{
+			Name:        n.Name,
+			Addresses:   []string{cidr},
+			Gateway:     n.Gateway,
+			Nameservers: []string{"8.8.8.8", "8.8.4.4"},
+		})
+	}
+	if len(netIfaces) == 0 {
+		return fmt.Errorf("no network interfaces with IP addresses")
+	}
+	netConfigBytes := cloudinit.GenerateNetworkConfig(cloudinit.NetworkConfig{Interfaces: netIfaces})
+
 	metaData := cloudinit.GenerateMetaData(cfg.Name)
 	userData := cloudinit.GenerateUserDataFromString(cfg.Name, sshKey, "ubuntu", "")
-	netConfig := cloudinit.GenerateNetworkConfigBytes(cfg.Name, []string{"192.168.122.10/24"}, "192.168.122.1", nil)
 
 	cloudInitDir := filepath.Join(vmDir, "cloud-init")
-	isoPath, err := cloudinit.GenerateISO(ctx, cloudInitDir, metaData, userData, netConfig)
+	isoPath, err := cloudinit.GenerateISO(ctx, cloudInitDir, metaData, userData, netConfigBytes)
 	if err != nil {
 		return fmt.Errorf("generate cloud-init: %w", err)
 	}
@@ -161,21 +225,26 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 	qmpSocket := filepath.Join(vmDir, "qmp.sock")
 	monitorSocket := filepath.Join(vmDir, "monitor.sock")
 
-	mac := cfg.MACAddress
-	if mac == "" {
-		mac = generateMAC(vmID)
+	var qemuNICs []qemu.NIC
+	for _, n := range nics {
+		qemuNICs = append(qemuNICs, qemu.NIC{Bridge: n.Bridge, MACAddress: n.MACAddress})
 	}
-
+	if len(qemuNICs) == 0 {
+		return fmt.Errorf("no NICs for QEMU config")
+	}
+	legacyMAC := qemuNICs[0].MACAddress
 	qemuCfg := qemu.VMConfig{
 		ID:            vmID,
 		Name:          cfg.Name,
 		VCPUs:         cfg.VCPUs,
 		MemoryMB:      cfg.MemoryMB,
 		DiskPath:      diskPath,
-		MACAddress:    mac,
+		MACAddress:    legacyMAC,
+		NICs:          qemuNICs,
 		CloudInit:     isoPath,
 		QMPSocket:     qmpSocket,
 		MonitorSocket: monitorSocket,
+		MachineType:   cfg.MachineType,
 	}
 
 	if err := a.qemu.StartVM(ctx, qemuCfg); err != nil {
@@ -189,8 +258,12 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 		zap.Int64("memory_mb", cfg.MemoryMB),
 	)
 
-	// Persist config for recovery after reboot
-	if err := a.persistVMConfig(vmID, cfg, diskPath, mac, isoPath); err != nil {
+
+	persistMAC := legacyMAC
+	if persistMAC == "" && len(qemuNICs) > 0 {
+		persistMAC = qemuNICs[0].MACAddress
+	}
+	if err := a.persistVMConfig(vmID, cfg, diskPath, persistMAC, isoPath); err != nil {
 		a.logger.Warn("failed to persist vm config for recovery", zap.Error(err), zap.String("vm_id", vmID))
 	}
 
@@ -240,7 +313,7 @@ func (a *Agent) loadVMConfig(vmID string) (*VMStartConfig, error) {
 	return &wrapper.VMStartConfig, nil
 }
 
-// RecoverVMs scans baseDir for VMs that were running before restart and restarts them.
+
 func (a *Agent) RecoverVMs(ctx context.Context) error {
 	entries, err := os.ReadDir(a.baseDir)
 	if err != nil {
@@ -300,8 +373,8 @@ func (a *Agent) StopVM(ctx context.Context, vmID string, force bool) error {
 		return fmt.Errorf("stop vm: %w", err)
 	}
 
-	// Remove persisted config so it won't be auto-recovered on next reboot
-	// Keep disk and cloud-init for manual restart, but don't auto-start
+
+
 	_ = os.Remove(filepath.Join(a.baseDir, vmID, "vm.json"))
 
 	a.logger.Info("vm stopped", zap.String("vm_id", vmID), zap.Bool("force", force))
@@ -414,17 +487,8 @@ func (a *Agent) DetachDisk(ctx context.Context, vmID, deviceID string) error {
 	return nil
 }
 
-func (a *Agent) GetConsoleURL(ctx context.Context, vmID string) (string, error) {
-	monitorSocket := filepath.Join(a.baseDir, vmID, "monitor.sock")
-	if _, err := os.Stat(monitorSocket); os.IsNotExist(err) {
-		return "", fmt.Errorf("vm not running")
-	}
-
-	return fmt.Sprintf("unix://%s", monitorSocket), nil
-}
-
 func (a *Agent) SubscribeCommands(ctx context.Context) error {
-	subject := fmt.Sprintf("commands.node.%s.>", a.nodeID)
+	subject := inats.SubjectForNode(a.nodeID, ">")
 
 	cons, err := a.js.CreateOrUpdateConsumer(ctx, "COMMANDS", jetstream.ConsumerConfig{
 		Durable:   fmt.Sprintf("node-agent-%s", a.nodeID),
@@ -474,12 +538,12 @@ func (a *Agent) handleCommand(ctx context.Context, msg jetstream.Msg) {
 			_ = path
 		}
 	case "attach_disk":
-		// expects disk_path in config
+
 		if cmd.Config != nil {
 			err = a.AttachDisk(ctx, cmd.VMID, cmd.Config.DiskPath, 1)
 		}
 	case "detach_disk":
-		// expects device_id - use VMID as placeholder for now
+
 		err = a.DetachDisk(ctx, cmd.VMID, cmd.VMID)
 	default:
 		err = fmt.Errorf("unknown action: %s", cmd.Action)
@@ -569,92 +633,50 @@ func (a *Agent) listVMs(ctx context.Context) ([]VMInfo, error) {
 }
 
 func readTotalCPUs() (int32, error) {
-	data, err := os.ReadFile("/proc/cpuinfo")
-	if err != nil {
-		return 0, err
-	}
-
-	count := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "processor") {
-			count++
-		}
-	}
-
-	return int32(count), nil
+	return hostinfo.ReadCPUCores()
 }
 
 func readUsedCPUs() (int32, error) {
-	data, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return 0, err
-	}
-
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "cpu ") {
-			fields := strings.Fields(line)
-			if len(fields) < 5 {
-				continue
-			}
-
-			user, _ := strconv.ParseInt(fields[1], 10, 64)
-			nice, _ := strconv.ParseInt(fields[2], 10, 64)
-			system, _ := strconv.ParseInt(fields[3], 10, 64)
-			idle, _ := strconv.ParseInt(fields[4], 10, 64)
-
-			total := user + nice + system + idle
-			used := user + nice + system
-
-			totalCPUs, _ := readTotalCPUs()
-			usage := float64(used) / float64(total) * float64(totalCPUs)
-			return int32(usage + 0.5), nil
-		}
-	}
-
-	return 0, nil
+	return hostinfo.ReadUsedCPUs()
 }
 
 func readMemory() (int64, int64, error) {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0, 0, err
-	}
-
-	var totalKB, availableKB int64
-
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-
-		val, _ := strconv.ParseInt(fields[1], 10, 64)
-
-		switch fields[0] {
-		case "MemTotal:":
-			totalKB = val
-		case "MemAvailable:":
-			availableKB = val
-		}
-	}
-
-	totalMB := totalKB / 1024
-	usedMB := (totalKB - availableKB) / 1024
-
-	return totalMB, usedMB, nil
+	return hostinfo.ReadMemory()
 }
 
-func generateMAC(vmID string) string {
-	hash := uint32(0)
-	for _, c := range vmID {
-		hash = hash*31 + uint32(c)
+func gatewayFromCIDR(cidrOrIP string) (string, error) {
+	ip, ipNet, err := net.ParseCIDR(cidrOrIP)
+	if err != nil {
+
+		if parsed := net.ParseIP(cidrOrIP); parsed != nil {
+
+			v4 := parsed.To4()
+			if v4 == nil {
+				return "", fmt.Errorf("not IPv4")
+			}
+			v4[3] = 1
+			return v4.String(), nil
+		}
+		return "", err
 	}
 
-	return fmt.Sprintf("52:54:%02x:%02x:%02x:%02x",
-		(hash>>24)&0xff,
-		(hash>>16)&0xff,
-		(hash>>8)&0xff,
-		hash&0xff,
-	)
+	gw := make(net.IP, len(ipNet.IP))
+	copy(gw, ipNet.IP)
+
+	if v4 := gw.To4(); v4 != nil {
+		gw = v4
+
+
+
+		val := uint32(gw[0])<<24 | uint32(gw[1])<<16 | uint32(gw[2])<<8 | uint32(gw[3])
+		val += 1
+		gw[0] = byte(val >> 24)
+		gw[1] = byte(val >> 16)
+		gw[2] = byte(val >> 8)
+		gw[3] = byte(val)
+		return gw.String(), nil
+	}
+
+	_ = ip
+	return gw.String(), nil
 }

@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"github.com/rymelabs/rymevisor/internal/qcow2"
 	"github.com/rymelabs/rymevisor/services/storage/domain"
 )
 
@@ -116,15 +116,9 @@ func (s *Service) CreateVolume(ctx context.Context, req *domain.CreateVolumeRequ
 	}
 
 	diskPath := filepath.Join(pool.Path, vol.ID+".qcow2")
-	sizeGB := req.SizeBytes / (1024 * 1024 * 1024)
-	if sizeGB < 1 {
-		sizeGB = 1
-	}
-
-	cmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", diskPath, fmt.Sprintf("%dG", sizeGB))
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if err := qcow2.Create(ctx, diskPath, req.SizeBytes); err != nil {
 		_ = s.volumeRepo.Delete(ctx, vol.ID)
-		return nil, fmt.Errorf("qemu-img create: %s: %w", string(output), err)
+		return nil, err
 	}
 
 	vol.Status = domain.VolumeStatusAvailable
@@ -133,7 +127,7 @@ func (s *Service) CreateVolume(ctx context.Context, req *domain.CreateVolumeRequ
 	}
 
 	pool.UsedBytes += req.SizeBytes
-	_ = s.poolRepo.Create(ctx, pool)
+	_ = s.poolRepo.Update(ctx, pool)
 
 	return vol, nil
 }
@@ -166,7 +160,7 @@ func (s *Service) DeleteVolume(ctx context.Context, id string, force bool) error
 	}
 
 	pool, err := s.poolRepo.GetByID(ctx, vol.PoolID)
-	if err != nil && pool != nil {
+	if err == nil && pool != nil {
 		diskPath := filepath.Join(pool.Path, vol.ID+".qcow2")
 		_ = os.Remove(diskPath)
 	}
@@ -193,14 +187,8 @@ func (s *Service) ResizeVolume(ctx context.Context, id string, sizeBytes int64) 
 	}
 
 	diskPath := filepath.Join(pool.Path, vol.ID+".qcow2")
-	sizeGB := sizeBytes / (1024 * 1024 * 1024)
-	if sizeGB < 1 {
-		sizeGB = 1
-	}
-
-	cmd := exec.CommandContext(ctx, "qemu-img", "resize", diskPath, fmt.Sprintf("%dG", sizeGB))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("qemu-img resize: %s: %w", string(output), err)
+	if err := qcow2.Resize(ctx, diskPath, sizeBytes); err != nil {
+		return nil, err
 	}
 
 	if sizeBytes > vol.SizeBytes {
@@ -211,7 +199,7 @@ func (s *Service) ResizeVolume(ctx context.Context, id string, sizeBytes int64) 
 			pool.UsedBytes = 0
 		}
 	}
-	_ = s.poolRepo.Create(ctx, pool)
+	_ = s.poolRepo.Update(ctx, pool)
 
 	vol.SizeBytes = sizeBytes
 	if err := s.volumeRepo.Update(ctx, vol); err != nil {
@@ -256,10 +244,9 @@ func (s *Service) CloneVolume(ctx context.Context, id string, name string) (*dom
 	srcPath := filepath.Join(pool.Path, srcVol.ID+".qcow2")
 	dstPath := filepath.Join(pool.Path, newVol.ID+".qcow2")
 
-	cmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", "-b", srcPath, "-F", "qcow2", dstPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if err := qcow2.Clone(ctx, srcPath, dstPath); err != nil {
 		_ = s.volumeRepo.Delete(ctx, newVol.ID)
-		return nil, fmt.Errorf("qemu-img clone: %s: %w", string(output), err)
+		return nil, err
 	}
 
 	newVol.Status = domain.VolumeStatusAvailable
@@ -268,7 +255,7 @@ func (s *Service) CloneVolume(ctx context.Context, id string, name string) (*dom
 	}
 
 	pool.UsedBytes += srcVol.SizeBytes
-	_ = s.poolRepo.Create(ctx, pool)
+	_ = s.poolRepo.Update(ctx, pool)
 
 	return newVol, nil
 }
@@ -306,14 +293,13 @@ func (s *Service) CreateSnapshot(ctx context.Context, volumeID, name string) (*d
 	}
 
 	diskPath := filepath.Join(pool.Path, vol.ID+".qcow2")
-	cmd := exec.CommandContext(ctx, "qemu-img", "snapshot", "-c", name, diskPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
+	if err := qcow2.SnapshotCreate(ctx, diskPath, name); err != nil {
 		_ = s.snapRepo.Delete(ctx, snap.ID)
-		return nil, fmt.Errorf("qemu-img snapshot: %s: %w", string(output), err)
+		return nil, err
 	}
 
 	snap.Status = "ready"
-	if err := s.snapRepo.Create(ctx, snap); err != nil {
+	if err := s.snapRepo.Update(ctx, snap); err != nil {
 		return nil, fmt.Errorf("update snapshot: %w", err)
 	}
 
@@ -340,9 +326,8 @@ func (s *Service) DeleteSnapshot(ctx context.Context, id string) error {
 	}
 
 	diskPath := filepath.Join(pool.Path, vol.ID+".qcow2")
-	cmd := exec.CommandContext(context.Background(), "qemu-img", "snapshot", "-d", snap.Name, diskPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("qemu-img delete snapshot: %s: %w", string(output), err)
+	if err := qcow2.SnapshotDelete(ctx, diskPath, snap.Name); err != nil {
+		return err
 	}
 
 	return s.snapRepo.Delete(ctx, id)
@@ -368,9 +353,8 @@ func (s *Service) RestoreSnapshot(ctx context.Context, snapshotID string) (*doma
 	}
 
 	diskPath := filepath.Join(pool.Path, vol.ID+".qcow2")
-	cmd := exec.CommandContext(context.Background(), "qemu-img", "snapshot", "-a", snap.Name, diskPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("qemu-img restore snapshot: %s: %w", string(output), err)
+	if err := qcow2.SnapshotApply(ctx, diskPath, snap.Name); err != nil {
+		return nil, err
 	}
 
 	return vol, nil

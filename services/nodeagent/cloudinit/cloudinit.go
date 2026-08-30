@@ -73,57 +73,6 @@ func GenerateMetaData(hostname string) []byte {
 	return buf.Bytes()
 }
 
-func GenerateUserData(cfg UserData) []byte {
-	var buf bytes.Buffer
-
-	buf.WriteString("#cloud-config\n")
-
-	if cfg.Hostname != "" {
-		fmt.Fprintf(&buf, "hostname: %s\n", cfg.Hostname)
-	}
-
-	if len(cfg.SSHKeys) > 0 {
-		buf.WriteString("ssh_authorized_keys:\n")
-		for _, key := range cfg.SSHKeys {
-			fmt.Fprintf(&buf, "  - %s\n", key)
-		}
-	}
-
-	user := cfg.User
-	if user == "" {
-		user = "ubuntu"
-	}
-
-	buf.WriteString("users:\n")
-	fmt.Fprintf(&buf, "  - name: %s\n", user)
-	fmt.Fprintf(&buf, "    sudo: ['ALL=(ALL) NOPASSWD:ALL']\n")
-	fmt.Fprintf(&buf, "    shell: /bin/bash\n")
-	fmt.Fprintf(&buf, "    lock_passwd: false\n")
-
-	if cfg.Password != "" {
-		fmt.Fprintf(&buf, "    passwd: %s\n", cfg.Password)
-	}
-
-	if len(cfg.Packages) > 0 {
-		buf.WriteString("packages:\n")
-		for _, pkg := range cfg.Packages {
-			fmt.Fprintf(&buf, "  - %s\n", pkg)
-		}
-	}
-
-	if len(cfg.RunCommands) > 0 {
-		buf.WriteString("runcmd:\n")
-		for _, cmd := range cfg.RunCommands {
-			fmt.Fprintf(&buf, "  - %s\n", cmd)
-		}
-	}
-
-	buf.WriteString("package_update: true\n")
-	buf.WriteString("package_upgrade: true\n")
-
-	return buf.Bytes()
-}
-
 func GenerateNetworkConfig(cfg NetworkConfig) []byte {
 	var buf bytes.Buffer
 
@@ -161,38 +110,38 @@ func GenerateNetworkConfig(cfg NetworkConfig) []byte {
 	return buf.Bytes()
 }
 
-func GenerateNetworkConfigBytes(hostname string, addresses []string, gateway string, nameservers []string) []byte {
-	iface := NetworkInterface{
-		Name:        "ens3",
-		Addresses:   addresses,
-		Gateway:     gateway,
-		Nameservers: nameservers,
-	}
-
-	if len(iface.Nameservers) == 0 {
-		iface.Nameservers = []string{"8.8.8.8", "8.8.4.4"}
-	}
-
-	return GenerateNetworkConfig(NetworkConfig{
-		Interfaces: []NetworkInterface{iface},
-	})
-}
-
 func GenerateUserDataFromString(hostname, sshKey, user, password string) []byte {
-	sshKeys := []string{}
-	if sshKey != "" {
-		sshKeys = strings.Split(sshKey, "\n")
+	var buf bytes.Buffer
+	buf.WriteString("#cloud-config\n")
+	if hostname != "" {
+		fmt.Fprintf(&buf, "hostname: %s\n", hostname)
 	}
-
-	return GenerateUserData(UserData{
-		Hostname: hostname,
-		SSHKeys:  sshKeys,
-		User:     user,
-		Password: password,
-		Packages: []string{"qemu-guest-agent"},
-		RunCommands: []string{
-			"systemctl enable qemu-guest-agent",
-			"systemctl start qemu-guest-agent",
-		},
-	})
+	if sshKey != "" {
+		sshKeys := strings.Split(sshKey, "\n")
+		if len(sshKeys) > 0 {
+			buf.WriteString("ssh_authorized_keys:\n")
+			for _, key := range sshKeys {
+				fmt.Fprintf(&buf, "  - %s\n", key)
+			}
+		}
+	}
+	if user == "" {
+		user = "ubuntu"
+	}
+	buf.WriteString("users:\n")
+	fmt.Fprintf(&buf, "  - name: %s\n", user)
+	fmt.Fprintf(&buf, "    sudo: ['ALL=(ALL) NOPASSWD:ALL']\n")
+	fmt.Fprintf(&buf, "    shell: /bin/bash\n")
+	fmt.Fprintf(&buf, "    lock_passwd: false\n")
+	if password != "" {
+		fmt.Fprintf(&buf, "    passwd: %s\n", password)
+	}
+	buf.WriteString("packages:\n")
+	fmt.Fprintf(&buf, "  - %s\n", "qemu-guest-agent")
+	buf.WriteString("runcmd:\n")
+	fmt.Fprintf(&buf, "  - %s\n", "systemctl enable qemu-guest-agent")
+	fmt.Fprintf(&buf, "  - %s\n", "systemctl start qemu-guest-agent")
+	buf.WriteString("package_update: true\n")
+	buf.WriteString("package_upgrade: true\n")
+	return buf.Bytes()
 }

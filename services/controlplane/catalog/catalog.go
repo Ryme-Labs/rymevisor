@@ -7,8 +7,8 @@ import (
 	"github.com/rymelabs/rymevisor/services/controlplane/domain"
 )
 
-// Official catalog of cloud images that can be auto-pulled.
-// URLs point to official cloud-image servers (no auth required).
+
+
 var officialImages = []domain.OfficialImage{
 	{
 		Name:         "ubuntu-24.04",
@@ -75,7 +75,7 @@ var officialImages = []domain.OfficialImage{
 	},
 }
 
-// Alias map: short names that resolve to official images.
+
 var aliases = map[string]string{
 	"ubuntu":       "ubuntu-22.04",
 	"ubuntu-lts":   "ubuntu-22.04",
@@ -84,16 +84,16 @@ var aliases = map[string]string{
 	"debian-latest": "debian-12",
 }
 
-// List returns all official images.
+
 func List() []domain.OfficialImage {
 	out := make([]domain.OfficialImage, len(officialImages))
 	copy(out, officialImages)
 	return out
 }
 
-// Find looks up an official image by os, version, arch.
-// If version is empty, returns the default for that OS/arch.
-// If arch is empty, defaults to amd64.
+
+
+
 func Find(os, version, arch string) (*domain.OfficialImage, error) {
 	os = strings.ToLower(strings.TrimSpace(os))
 	version = strings.TrimSpace(version)
@@ -102,16 +102,16 @@ func Find(os, version, arch string) (*domain.OfficialImage, error) {
 		arch = "amd64"
 	}
 
-	// Resolve alias first: "ubuntu" -> "ubuntu-22.04"
+
 	if alias, ok := aliases[os]; ok && version == "" {
-		// os is alias like "ubuntu"
+
 		for i := range officialImages {
 			if officialImages[i].Name == alias && officialImages[i].Architecture == arch {
 				return &officialImages[i], nil
 			}
 		}
 	}
-	// Also handle image string like "ubuntu-22.04" passed as os
+
 	combined := os
 	if version != "" {
 		combined = fmt.Sprintf("%s-%s", os, version)
@@ -125,7 +125,6 @@ func Find(os, version, arch string) (*domain.OfficialImage, error) {
 		}
 	}
 
-	// Direct match on os/version/arch
 	for i := range officialImages {
 		oi := &officialImages[i]
 		if oi.OS == os && oi.Architecture == arch {
@@ -135,34 +134,24 @@ func Find(os, version, arch string) (*domain.OfficialImage, error) {
 		}
 	}
 
-	// Fallback: try case-insensitive os match
-	for i := range officialImages {
-		oi := &officialImages[i]
-		if strings.EqualFold(oi.OS, os) && strings.EqualFold(oi.Architecture, arch) {
-			if version == "" || oi.OSVersion == version {
-				return oi, nil
-			}
-		}
-	}
-
 	return nil, fmt.Errorf("official image not found for os=%s version=%s arch=%s", os, version, arch)
 }
 
-// ResolveImageAlias resolves a user-provided image string like "ubuntu", "ubuntu-22.04", "debian", "debian-12" to an official image.
+
 func ResolveImageAlias(image string) (*domain.OfficialImage, error) {
 	image = strings.ToLower(strings.TrimSpace(image))
 	if image == "" {
 		return nil, fmt.Errorf("image alias is empty")
 	}
 
-	// Direct name match
+
 	for i := range officialImages {
 		if officialImages[i].Name == image {
 			return &officialImages[i], nil
 		}
 	}
 
-	// Alias map
+
 	if alias, ok := aliases[image]; ok {
 		for i := range officialImages {
 			if officialImages[i].Name == alias {
@@ -171,14 +160,14 @@ func ResolveImageAlias(image string) (*domain.OfficialImage, error) {
 		}
 	}
 
-	// Try parsing "os-version" or "os-version-arch"
+
 	parts := strings.Split(image, "-")
 	if len(parts) >= 1 {
 		os := parts[0]
 		version := ""
 		arch := "amd64"
 		if len(parts) == 2 {
-			// could be os-version or os-arch
+
 			if parts[1] == "amd64" || parts[1] == "arm64" {
 				arch = parts[1]
 			} else {

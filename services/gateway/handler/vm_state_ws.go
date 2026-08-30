@@ -9,14 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
+	ws "github.com/rymelabs/rymevisor/internal/ws"
 )
 
-var vmStateUpgraderGW = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+var vmStateUpgraderGW = ws.Upgrader
 
 func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 	if !wsAuth(r) {
@@ -24,14 +20,14 @@ func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract vm_id from path or query
+
 	vmID := r.URL.Query().Get("vm_id")
 	if vmID == "" {
 		vmID = r.URL.Query().Get("id")
 	}
-	// Try chi param if routed as /ws/vm/{id}/state
+
 	if vmID == "" {
-		// Path is /ws/vm/{id}/state or /api/v1/ws/vm/{id}/state
+
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 		for i, p := range parts {
 			if p == "vm" && i+1 < len(parts) {
@@ -45,15 +41,7 @@ func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	protocol := r.Header.Get("Sec-WebSocket-Protocol")
-	var responseHeader http.Header
-	if protocol != "" {
-		validKey := os.Getenv("RYMEVISOR_API_KEY")
-		if strings.Contains(protocol, validKey) {
-			responseHeader = http.Header{}
-			responseHeader.Set("Sec-WebSocket-Protocol", validKey)
-		}
-	}
+	responseHeader := ws.AuthResponseHeader(r)
 
 	conn, err := vmStateUpgraderGW.Upgrade(w, r, responseHeader)
 	if err != nil {
@@ -61,21 +49,7 @@ func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
-		}
-	}()
+	ws.SetupPingPong(conn)
 
 	_ = conn.WriteJSON(map[string]interface{}{
 		"type":      "connected",
@@ -84,7 +58,7 @@ func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Unix(),
 	})
 
-	// Poll control-plane for VM state via HTTP
+
 	controlPlaneURL := g.config.ControlPlaneURL
 	if !strings.HasPrefix(controlPlaneURL, "http") {
 		controlPlaneURL = "http://" + controlPlaneURL
@@ -101,7 +75,7 @@ func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			// Fetch VM from control-plane
+
 			req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/vms/%s", controlPlaneURL, vmID), nil)
 			req.Header.Set("X-API-Key", apiKey)
 			resp, err := client.Do(req)
@@ -160,12 +134,12 @@ func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 
-			// Check image status if VM has disks with image_id
+
 			if disks, ok := vm["disks"].([]interface{}); ok {
 				for _, d := range disks {
 					if dm, ok := d.(map[string]interface{}); ok {
 						if imageID, ok := dm["image_id"].(string); ok && imageID != "" {
-							// Fetch image
+
 							req2, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/images/%s", controlPlaneURL, imageID), nil)
 							req2.Header.Set("X-API-Key", apiKey)
 							resp2, err := client.Do(req2)

@@ -1,8 +1,6 @@
 package logging
 
 import (
-	"os"
-
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -43,15 +41,4 @@ func Must(level, format string) *zap.Logger {
 		panic(err)
 	}
 	return l
-}
-
-func WithStdout() *zap.Logger {
-	return zap.New(
-		zapcore.NewCore(
-			zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()),
-			zapcore.Lock(os.Stdout),
-			zapcore.InfoLevel,
-		),
-		zap.AddCaller(),
-	)
 }

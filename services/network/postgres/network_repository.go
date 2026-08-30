@@ -125,21 +125,35 @@ func (r *NetworkRepository) listFirewallRules(ctx context.Context, networkID str
 }
 
 func (r *NetworkRepository) List(ctx context.Context, filter domain.NetworkFilter) ([]*domain.PrivateNetwork, int, error) {
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.PerPage < 1 {
+		filter.PerPage = 20
+	}
+	where := ""
+	args := []any{}
+	argIdx := 1
+	if filter.OrganizationID != "" {
+		where = fmt.Sprintf(" WHERE organization_id = $%d::uuid", argIdx)
+		args = append(args, filter.OrganizationID)
+		argIdx++
+	}
+
 	var total int
-	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM private_networks`, 
-	).Scan(&total)
+	countQuery := "SELECT COUNT(*) FROM private_networks" + where
+	err := r.pool.QueryRow(ctx, countQuery, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	offset := (filter.Page - 1) * filter.PerPage
-	rows, err := r.pool.Query(ctx,
-		`SELECT id, name, organization_id, vpc_id, type, cidr::text, ipv6_cidr::text, internet_gateway, labels, created_at, updated_at
-		 FROM private_networks
-		 ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-		filter.PerPage, offset,
-	)
+	dataArgs := append([]any{}, args...)
+	dataArgs = append(dataArgs, filter.PerPage, offset)
+	listQuery := fmt.Sprintf(`SELECT id, name, organization_id, vpc_id, type, cidr::text, ipv6_cidr::text, internet_gateway, labels, created_at, updated_at
+		 FROM private_networks%s
+		 ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, argIdx, argIdx+1)
+	rows, err := r.pool.Query(ctx, listQuery, dataArgs...)
 	if err != nil {
 		return nil, 0, err
 	}

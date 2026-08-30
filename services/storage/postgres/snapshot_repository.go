@@ -65,3 +65,11 @@ func (r *SnapshotRepository) Delete(ctx context.Context, id string) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM volume_snapshots WHERE id = $1`, id)
 	return err
 }
+
+func (r *SnapshotRepository) Update(ctx context.Context, snap *domain.VolumeSnapshot) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE volume_snapshots SET name=$2, size_bytes=$3, status=$4 WHERE id=$1`,
+		snap.ID, snap.Name, snap.SizeBytes, snap.Status,
+	)
+	return err
+}

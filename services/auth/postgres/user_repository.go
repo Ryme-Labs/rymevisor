@@ -132,13 +132,85 @@ func (r *UserRepository) List(ctx context.Context, filter domain.UserFilter) ([]
 		return nil, 0, fmt.Errorf("iterate users: %w", err)
 	}
 
-	for _, u := range users {
-		if err := r.populateRelations(ctx, u); err != nil {
+	if len(users) > 0 {
+		if err := r.batchPopulateRelations(ctx, users); err != nil {
 			return nil, 0, err
 		}
 	}
 
 	return users, total, nil
+}
+
+func (r *UserRepository) batchPopulateRelations(ctx context.Context, users []*domain.User) error {
+	ids := make([]string, len(users))
+	userMap := make(map[string]*domain.User, len(users))
+	for i, u := range users {
+		ids[i] = u.ID
+		userMap[u.ID] = u
+		u.Roles = []string{}
+		u.Organizations = []string{}
+		u.Permissions = []string{}
+	}
+
+	roleRows, err := r.pool.Query(ctx, `SELECT ur.user_id::text, r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return fmt.Errorf("batch query roles: %w", err)
+	}
+	defer roleRows.Close()
+	for roleRows.Next() {
+		var userID, roleName string
+		if err := roleRows.Scan(&userID, &roleName); err != nil {
+			return fmt.Errorf("scan role: %w", err)
+		}
+		if u, ok := userMap[userID]; ok {
+			u.Roles = append(u.Roles, roleName)
+		}
+	}
+	if err := roleRows.Err(); err != nil {
+		return err
+	}
+
+	orgRows, err := r.pool.Query(ctx, `SELECT uo.user_id::text, o.slug FROM organizations o JOIN user_organizations uo ON uo.organization_id = o.id WHERE uo.user_id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return fmt.Errorf("batch query orgs: %w", err)
+	}
+	defer orgRows.Close()
+	for orgRows.Next() {
+		var userID, slug string
+		if err := orgRows.Scan(&userID, &slug); err != nil {
+			return fmt.Errorf("scan org: %w", err)
+		}
+		if u, ok := userMap[userID]; ok {
+			u.Organizations = append(u.Organizations, slug)
+		}
+	}
+	if err := orgRows.Err(); err != nil {
+		return err
+	}
+
+	permRows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT ur.user_id::text, p.name FROM permissions p
+		JOIN role_permissions rp ON rp.permission_id = p.id
+		JOIN user_roles ur ON ur.role_id = rp.role_id
+		WHERE ur.user_id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return fmt.Errorf("batch query permissions: %w", err)
+	}
+	defer permRows.Close()
+	for permRows.Next() {
+		var userID, permName string
+		if err := permRows.Scan(&userID, &permName); err != nil {
+			return fmt.Errorf("scan permission: %w", err)
+		}
+		if u, ok := userMap[userID]; ok {
+			u.Permissions = append(u.Permissions, permName)
+		}
+	}
+	if err := permRows.Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *UserRepository) Update(ctx context.Context, user *domain.User) error {

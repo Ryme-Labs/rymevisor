@@ -16,7 +16,6 @@ It was originally developed internally at Ryme Labs to manage our fleet of serve
 
 - Go 1.23
 - PostgreSQL 16
-- Redis 7
 - NATS JetStream
 - QEMU/KVM
 - Chi router

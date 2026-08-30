@@ -12,10 +12,17 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/rymelabs/rymevisor/internal/qcow2"
 )
 
 type Manager struct {
 	baseDir string
+}
+
+type NIC struct {
+	Bridge     string
+	MACAddress string
 }
 
 type VMConfig struct {
@@ -25,9 +32,11 @@ type VMConfig struct {
 	MemoryMB      int64
 	DiskPath      string
 	MACAddress    string
+	NICs          []NIC
 	CloudInit     string
 	QMPSocket     string
 	MonitorSocket string
+	MachineType   string
 }
 
 type qmpResponse struct {
@@ -64,20 +73,52 @@ func (m *Manager) StartVM(ctx context.Context, cfg VMConfig) error {
 		return fmt.Errorf("create vm dir: %w", err)
 	}
 
+	nics := cfg.NICs
+	if len(nics) == 0 {
+		return fmt.Errorf("no NICs provided")
+	}
+
+
+	for _, n := range nics {
+		_ = EnsureBridge(n.Bridge, "", "")
+	}
+
+
+	machineType := cfg.MachineType
+	if machineType == "" {
+		machineType = "q35"
+	}
+	hasKVM := false
+	if _, err := os.Stat("/dev/kvm"); err == nil {
+		hasKVM = true
+	}
+
 	args := []string{
 		"-name", cfg.Name,
 		"-smp", strconv.Itoa(int(cfg.VCPUs)),
 		"-m", strconv.FormatInt(cfg.MemoryMB, 10),
-		"-drive", fmt.Sprintf("file=%s,format=qcow2", cfg.DiskPath),
-		"-netdev", "bridge,id=net0,br=virbr0",
-		"-device", fmt.Sprintf("virtio-net-pci,netdev=net0,mac=%s", cfg.MACAddress),
+		"-drive", fmt.Sprintf("file=%s,format=qcow2,cache=none", cfg.DiskPath),
+	}
+
+	for i, n := range nics {
+		args = append(args,
+			"-netdev", fmt.Sprintf("bridge,id=net%d,br=%s", i, n.Bridge),
+			"-device", fmt.Sprintf("virtio-net-pci,netdev=net%d,mac=%s", i, n.MACAddress),
+		)
+	}
+	args = append(args,
 		"-qmp", fmt.Sprintf("unix:%s,server,nowait", cfg.QMPSocket),
 		"-monitor", fmt.Sprintf("unix:%s,server,nowait", cfg.MonitorSocket),
-		"-enable-kvm",
-		"-machine", "q35,accel=kvm",
+	)
+	if hasKVM {
+		args = append(args, "-enable-kvm", "-machine", fmt.Sprintf("%s,accel=kvm", machineType))
+	} else {
+		args = append(args, "-machine", fmt.Sprintf("%s,accel=tcg", machineType))
+	}
+	args = append(args,
 		"-display", "none",
 		"-daemonize",
-	}
+	)
 
 	if cfg.CloudInit != "" {
 		args = append(args, "-drive", fmt.Sprintf("file=%s,format=raw,if=virtio", cfg.CloudInit))
@@ -182,52 +223,18 @@ func (m *Manager) CreateDiskFromImage(ctx context.Context, vmID, name string, si
 
 	path := filepath.Join(dir, fmt.Sprintf("%s.qcow2", name))
 
-	// If imagePath provided and exists, create with backing file
 	if imagePath != "" {
 		if _, err := os.Stat(imagePath); err == nil {
-			// Try to detect backing format
-			backingFmt := "qcow2"
-			if out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", imagePath).CombinedOutput(); err == nil {
-				// Parse JSON to get format, fallback to qcow2
-				var info struct {
-					Format string `json:"format"`
-				}
-				_ = json.Unmarshal(out, &info)
-				if info.Format != "" {
-					backingFmt = info.Format
-				}
-			} else if filepath.Ext(imagePath) == ".img" {
-				backingFmt = "raw"
-			}
-
-			cmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", "-b", imagePath, "-F", backingFmt, path)
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				return "", fmt.Errorf("qemu-img create with backing %s: %w: %s", imagePath, err, string(output))
-			}
-			// Resize to requested size if larger than backing image
-			if sizeBytes > 0 {
-				sizeGB := float64(sizeBytes) / (1024 * 1024 * 1024)
-				sizeStr := fmt.Sprintf("%.1fG", sizeGB)
-				resizeCmd := exec.CommandContext(ctx, "qemu-img", "resize", path, sizeStr)
-				_, _ = resizeCmd.CombinedOutput() // ignore error, not critical
+			if err := qcow2.CreateWithBacking(ctx, path, imagePath, sizeBytes); err != nil {
+				return "", err
 			}
 			return path, nil
 		}
 	}
 
-	sizeGB := float64(sizeBytes) / (1024 * 1024 * 1024)
-	if sizeGB < 0.1 {
-		sizeGB = 0.1
+	if err := qcow2.Create(ctx, path, sizeBytes); err != nil {
+		return "", err
 	}
-	sizeStr := fmt.Sprintf("%.1fG", sizeGB)
-
-	cmd := exec.CommandContext(ctx, "qemu-img", "create", "-f", "qcow2", path, sizeStr)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("qemu-img create: %w: %s", err, string(output))
-	}
-
 	return path, nil
 }
 
@@ -408,4 +415,57 @@ func (m *Manager) waitForSocket(path string, timeout time.Duration) error {
 	}
 
 	return fmt.Errorf("timeout waiting for socket %s", path)
+}
+
+
+
+
+func EnsureBridge(bridge, gatewayIP, ipCIDR string) error {
+
+	if _, err := exec.Command("ip", "link", "show", bridge).CombinedOutput(); err == nil {
+
+		_, _ = exec.Command("ip", "link", "set", bridge, "up").CombinedOutput()
+		return nil
+	}
+
+
+	if out, err := exec.Command("ip", "link", "add", bridge, "type", "bridge").CombinedOutput(); err != nil {
+
+		if strings.Contains(string(out), "exists") {
+			return nil
+		}
+
+		if strings.Contains(string(out), "Operation not permitted") || strings.Contains(string(out), "permission") {
+			return nil
+		}
+		return fmt.Errorf("create bridge %s: %s", bridge, string(out))
+	}
+
+	if _, err := exec.Command("ip", "link", "set", bridge, "up").CombinedOutput(); err != nil {
+		return nil
+	}
+
+
+	if gatewayIP != "" {
+		prefix := 24
+		if ipCIDR != "" {
+			if _, ipNet, err := net.ParseCIDR(ipCIDR); err == nil {
+				if ones, _ := ipNet.Mask.Size(); ones > 0 {
+					prefix = ones
+				}
+			}
+		}
+		gwCIDR := fmt.Sprintf("%s/%d", gatewayIP, prefix)
+		_, _ = exec.Command("ip", "addr", "add", gwCIDR, "dev", bridge).CombinedOutput()
+
+		_, _ = exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING", "-s", gwCIDR, "-j", "MASQUERADE").CombinedOutput()
+
+		if _, err := exec.Command("iptables", "-t", "nat", "-C", "POSTROUTING", "-s", fmt.Sprintf("%s/%d", ipCIDR, prefix), "-j", "MASQUERADE").CombinedOutput(); err != nil {
+			_, _ = exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", gwCIDR, "-j", "MASQUERADE").CombinedOutput()
+		}
+
+		_, _ = exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").CombinedOutput()
+	}
+
+	return nil
 }

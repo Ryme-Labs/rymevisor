@@ -64,6 +64,7 @@ type StoragePoolRepository interface {
 	Create(ctx context.Context, pool *StoragePool) error
 	GetByID(ctx context.Context, id string) (*StoragePool, error)
 	List(ctx context.Context) ([]*StoragePool, error)
+	Update(ctx context.Context, pool *StoragePool) error
 }
 
 type VolumeRepository interface {
@@ -85,6 +86,7 @@ type SnapshotRepository interface {
 	GetByID(ctx context.Context, id string) (*VolumeSnapshot, error)
 	ListByVolume(ctx context.Context, volumeID string) ([]*VolumeSnapshot, error)
 	Delete(ctx context.Context, id string) error
+	Update(ctx context.Context, snap *VolumeSnapshot) error
 }
 
 type StorageService interface {

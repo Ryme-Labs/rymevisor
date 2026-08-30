@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rymelabs/rymevisor/internal/jsonutil"
 	"github.com/rymelabs/rymevisor/services/scheduler"
 	"github.com/rymelabs/rymevisor/services/scheduler/domain"
 )
@@ -53,11 +54,11 @@ type jobListResponse struct {
 func (h *Handler) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	var req scheduleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		jsonutil.WriteJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
 	if req.VMID == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "vm_id is required"})
+		jsonutil.WriteJSON(w, http.StatusBadRequest, errorResponse{Error: "vm_id is required"})
 		return
 	}
 	if req.Constraints == nil {
@@ -66,26 +67,26 @@ func (h *Handler) handleSchedule(w http.ResponseWriter, r *http.Request) {
 
 	nodeID, err := h.svc.Schedule(r.Context(), req.VMID, req.Constraints, req.Priority)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		jsonutil.WriteJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, scheduleResponse{NodeID: nodeID})
+	jsonutil.WriteJSON(w, http.StatusOK, scheduleResponse{NodeID: nodeID})
 }
 
 func (h *Handler) handleCancel(w http.ResponseWriter, r *http.Request) {
 	var req cancelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
+		jsonutil.WriteJSON(w, http.StatusBadRequest, errorResponse{Error: "invalid request body"})
 		return
 	}
 	if req.VMID == "" {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "vm_id is required"})
+		jsonutil.WriteJSON(w, http.StatusBadRequest, errorResponse{Error: "vm_id is required"})
 		return
 	}
 
 	if err := h.svc.CancelSchedule(r.Context(), req.VMID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		jsonutil.WriteJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 
@@ -106,22 +107,18 @@ func (h *Handler) handleListJobs(w http.ResponseWriter, r *http.Request) {
 
 	jobs, total, err := h.svc.ListScheduledJobs(r.Context(), nodeID, page, perPage)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
+		jsonutil.WriteJSON(w, http.StatusInternalServerError, errorResponse{Error: err.Error()})
 		return
 	}
 	if jobs == nil {
 		jobs = []*domain.ScheduledJob{}
 	}
 
-	writeJSON(w, http.StatusOK, jobListResponse{
+	jsonutil.WriteJSON(w, http.StatusOK, jobListResponse{
 		Jobs:  jobs,
 		Total: total,
 		Page:  page,
 	})
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
+

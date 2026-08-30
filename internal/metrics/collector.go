@@ -1,17 +1,17 @@
 package metrics
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/rymelabs/rymevisor/internal/hostinfo"
 )
 
-// SystemMetrics represents full host metrics
+
 type SystemMetrics struct {
 	Timestamp int64         `json:"timestamp"`
 	CPU       CPUMetrics    `json:"cpu"`
@@ -25,7 +25,7 @@ type SystemMetrics struct {
 type CPUMetrics struct {
 	UsagePercent float64   `json:"usage_percent"`
 	Cores        int32     `json:"cores"`
-	LoadAvg      []float64 `json:"load_avg"` // 1,5,15 min
+	LoadAvg      []float64 `json:"load_avg"`
 }
 
 type MemoryMetrics struct {
@@ -79,7 +79,7 @@ type LoadMetrics struct {
 	TotalProcesses   int `json:"total_processes"`
 }
 
-// VMMetrics represents per-VM metrics
+
 type VMMetrics struct {
 	VMID        string  `json:"vm_id"`
 	Name        string  `json:"name"`
@@ -143,7 +143,7 @@ func (c *Collector) CollectSystem() (*SystemMetrics, error) {
 		Timestamp: now.Unix(),
 	}
 
-	// CPU
+
 	cores, _ := readCPUCores()
 	m.CPU.Cores = cores
 	usage, _ := c.readCPUUsage()
@@ -157,20 +157,19 @@ func (c *Collector) CollectSystem() (*SystemMetrics, error) {
 		m.Load.TotalProcesses = total
 	}
 
-	// Memory
+
 	if mem, err := readMemory(); err == nil {
 		m.Memory = *mem
 	}
 
-	// Disk
+
 	if disk, err := readDisk(); err == nil {
-		// Add I/O stats
+
 		if rb, wb, ri, wi, err := readDiskStats(); err == nil {
-			// Calculate delta if we have previous
+
 			if !c.prevDisk.time.IsZero() {
 				elapsed := now.Sub(c.prevDisk.time).Seconds()
 				if elapsed > 0 {
-					// For now, just set absolute, not rate
 					_ = elapsed
 				}
 			}
@@ -187,12 +186,12 @@ func (c *Collector) CollectSystem() (*SystemMetrics, error) {
 		m.Disk = *disk
 	}
 
-	// Network
+
 	if netMetrics, err := c.readNetwork(); err == nil {
 		m.Network = *netMetrics
 	}
 
-	// Uptime
+
 	if up, err := readUptime(); err == nil {
 		m.Uptime = up
 	}
@@ -210,7 +209,7 @@ func (c *Collector) CollectVM(vmID, name, status string, vcpus int32, memoryMB i
 		Timestamp: time.Now().Unix(),
 	}
 
-	// Try to get PID and process stats if VM is running
+
 	pid, err := readVMPid(vmID)
 	if err == nil && pid > 0 {
 		m.PID = pid
@@ -228,7 +227,7 @@ func (c *Collector) CollectVM(vmID, name, status string, vcpus int32, memoryMB i
 		}
 	}
 
-	// Disk stats for VM
+
 	if diskPath := vmDiskPath(vmID); diskPath != "" {
 		if size, used, err := readVMDiskUsage(diskPath); err == nil {
 			m.Disk.SizeGB = size / (1024 * 1024 * 1024)
@@ -236,7 +235,7 @@ func (c *Collector) CollectVM(vmID, name, status string, vcpus int32, memoryMB i
 		}
 	}
 
-	// Network stats for VM tap interface
+
 	if netStats, err := readVMNetwork(vmID); err == nil {
 		m.Network = *netStats
 	}
@@ -245,40 +244,13 @@ func (c *Collector) CollectVM(vmID, name, status string, vcpus int32, memoryMB i
 }
 
 func readCPUCores() (int32, error) {
-	data, err := os.ReadFile("/proc/cpuinfo")
-	if err != nil {
-		return 0, err
-	}
-	count := int32(0)
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "processor") {
-			count++
-		}
-	}
-	return count, nil
+	return hostinfo.ReadCPUCores()
 }
 
 func (c *Collector) readCPUUsage() (float64, error) {
-	data, err := os.ReadFile("/proc/stat")
+	idle, total, err := hostinfo.ReadCPUStat()
 	if err != nil {
 		return 0, err
-	}
-	var idle, total int64
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "cpu ") {
-			fields := strings.Fields(line)
-			if len(fields) < 5 {
-				break
-			}
-			for i, f := range fields[1:] {
-				v, _ := strconv.ParseInt(f, 10, 64)
-				total += v
-				if i == 3 { // idle is 4th field (0-indexed 3)
-					idle = v
-				}
-			}
-			break
-		}
 	}
 	now := time.Now()
 	if c.prevCPU.time.IsZero() {
@@ -310,180 +282,76 @@ func (c *Collector) readCPUUsage() (float64, error) {
 }
 
 func readLoadAvg() ([]float64, error) {
-	data, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		return nil, err
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 3 {
-		return nil, fmt.Errorf("invalid loadavg")
-	}
-	var out []float64
-	for i := 0; i < 3; i++ {
-		v, _ := strconv.ParseFloat(fields[i], 64)
-		out = append(out, v)
-	}
-	return out, nil
+	return hostinfo.ReadLoadAvg()
 }
 
 func readLoadProcs() (int, int, error) {
-	data, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		return 0, 0, err
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 4 {
-		return 0, 0, nil
-	}
-	// field 4 is like "2/123"
-	parts := strings.Split(fields[3], "/")
-	if len(parts) != 2 {
-		return 0, 0, nil
-	}
-	running, _ := strconv.Atoi(parts[0])
-	total, _ := strconv.Atoi(parts[1])
-	return running, total, nil
+	return hostinfo.ReadLoadProcs()
 }
 
 func readMemory() (*MemoryMetrics, error) {
-	data, err := os.ReadFile("/proc/meminfo")
+	mi, err := hostinfo.ReadMemoryInfo()
 	if err != nil {
 		return nil, err
 	}
-	var total, free, available, buffers, cached, swapTotal, swapFree int64
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		val, _ := strconv.ParseInt(fields[1], 10, 64)
-		switch fields[0] {
-		case "MemTotal:":
-			total = val
-		case "MemFree:":
-			free = val
-		case "MemAvailable:":
-			available = val
-		case "Buffers:":
-			buffers = val
-		case "Cached:":
-			cached = val
-		case "SwapTotal:":
-			swapTotal = val
-		case "SwapFree:":
-			swapFree = val
-		}
-	}
-	used := total - free - buffers - cached
-	if used < 0 {
-		used = total - available
-	}
-	m := &MemoryMetrics{
-		TotalMB:     total / 1024,
-		FreeMB:      free / 1024,
-		AvailableMB: available / 1024,
-		UsedMB:      used / 1024,
-		SwapTotalMB: swapTotal / 1024,
-		SwapUsedMB:  (swapTotal - swapFree) / 1024,
-	}
-	if total > 0 {
-		m.UsagePercent = float64(used) / float64(total) * 100
-	}
-	return m, nil
+	return &MemoryMetrics{
+		TotalMB:      mi.TotalMB,
+		FreeMB:       mi.FreeMB,
+		AvailableMB:  mi.AvailableMB,
+		UsedMB:       mi.UsedMB,
+		SwapTotalMB:  mi.SwapTotalMB,
+		SwapUsedMB:   mi.SwapUsedMB,
+		UsagePercent: mi.UsagePercent,
+	}, nil
 }
 
 func readDisk() (*DiskMetrics, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs("/", &stat); err != nil {
+	di, err := hostinfo.ReadDisk("/")
+	if err != nil {
 		return nil, err
 	}
-	total := int64(stat.Blocks) * int64(stat.Bsize)
-	free := int64(stat.Bfree) * int64(stat.Bsize)
-	used := total - free
-	m := &DiskMetrics{
-		TotalGB: total / (1024 * 1024 * 1024),
-		FreeGB:  free / (1024 * 1024 * 1024),
-		UsedGB:  used / (1024 * 1024 * 1024),
-	}
-	if total > 0 {
-		m.UsagePercent = float64(used) / float64(total) * 100
-	}
-	return m, nil
+	return &DiskMetrics{
+		TotalGB:      di.TotalGB,
+		FreeGB:       di.FreeGB,
+		UsedGB:       di.UsedGB,
+		UsagePercent: di.UsagePercent,
+	}, nil
 }
 
 func readDiskStats() (readBytes, writeBytes, readIOPS, writeIOPS int64, err error) {
-	data, err := os.ReadFile("/proc/diskstats")
+	info, err := hostinfo.ReadDiskStats()
 	if err != nil {
 		return 0, 0, 0, 0, err
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 14 {
-			continue
-		}
-		dev := fields[2]
-		// Skip loop, ram, etc.
-		if strings.HasPrefix(dev, "loop") || strings.HasPrefix(dev, "ram") {
-			continue
-		}
-		// Consider sda, vda, nvme
-		if !strings.HasPrefix(dev, "sd") && !strings.HasPrefix(dev, "vd") && !strings.HasPrefix(dev, "nvme") && !strings.HasPrefix(dev, "mmc") {
-			continue
-		}
-		reads, _ := strconv.ParseInt(fields[3], 10, 64)
-		sectorsRead, _ := strconv.ParseInt(fields[5], 10, 64)
-		writes, _ := strconv.ParseInt(fields[7], 10, 64)
-		sectorsWritten, _ := strconv.ParseInt(fields[9], 10, 64)
-		readIOPS += reads
-		writeIOPS += writes
-		readBytes += sectorsRead * 512
-		writeBytes += sectorsWritten * 512
-	}
-	return
+	return info.ReadBytes, info.WriteBytes, info.ReadIOPS, info.WriteIOPS, nil
 }
 
 func (c *Collector) readNetwork() (*NetworkMetrics, error) {
-	data, err := os.ReadFile("/proc/net/dev")
+	ifaces, err := hostinfo.ReadNetwork()
 	if err != nil {
 		return nil, err
 	}
 	var interfaces []NetInterface
 	var totalRx, totalTx, totalRxP, totalTxP int64
 	now := time.Now()
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, ":") {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		iface := strings.TrimSpace(parts[0])
-		if iface == "lo" {
-			continue
-		}
-		fields := strings.Fields(strings.TrimSpace(parts[1]))
-		if len(fields) < 16 {
-			continue
-		}
-		rxBytes, _ := strconv.ParseInt(fields[0], 10, 64)
-		rxPackets, _ := strconv.ParseInt(fields[1], 10, 64)
-		rxErrors, _ := strconv.ParseInt(fields[2], 10, 64)
-		txBytes, _ := strconv.ParseInt(fields[8], 10, 64)
-		txPackets, _ := strconv.ParseInt(fields[9], 10, 64)
-		txErrors, _ := strconv.ParseInt(fields[10], 10, 64)
+	for _, iface := range ifaces {
+		rxBytes := iface.RxBytes
+		rxPackets := iface.RxPackets
+		rxErrors := iface.RxErrors
+		txBytes := iface.TxBytes
+		txPackets := iface.TxPackets
+		txErrors := iface.TxErrors
+		name := iface.Name
 
-		// Calculate Mbps
 		var rxMbps, txMbps float64
-		if prev, ok := c.prevNet[iface]; ok {
+		if prev, ok := c.prevNet[name]; ok {
 			elapsed := now.Sub(prev.Time).Seconds()
 			if elapsed > 0 {
 				rxMbps = float64(rxBytes-prev.RxBytes) * 8 / elapsed / 1e6
 				txMbps = float64(txBytes-prev.TxBytes) * 8 / elapsed / 1e6
 			}
 		}
-		c.prevNet[iface] = NetSample{RxBytes: rxBytes, TxBytes: txBytes, RxPackets: rxPackets, TxPackets: txPackets, Time: now}
+		c.prevNet[name] = NetSample{RxBytes: rxBytes, TxBytes: txBytes, RxPackets: rxPackets, TxPackets: txPackets, Time: now}
 
 		totalRx += rxBytes
 		totalTx += txBytes
@@ -491,14 +359,13 @@ func (c *Collector) readNetwork() (*NetworkMetrics, error) {
 		totalTxP += txPackets
 
 		interfaces = append(interfaces, NetInterface{
-			Name: iface, RxBytes: rxBytes, TxBytes: txBytes,
+			Name: name, RxBytes: rxBytes, TxBytes: txBytes,
 			RxPackets: rxPackets, TxPackets: txPackets,
 			RxErrors: rxErrors, TxErrors: txErrors,
 			RxMbps: rxMbps, TxMbps: txMbps,
 		})
 	}
 
-	// Calculate total Mbps from previous total
 	var totalRxMbps, totalTxMbps float64
 	if prevTotal, ok := c.prevNet["__total__"]; ok {
 		elapsed := now.Sub(prevTotal.Time).Seconds()
@@ -521,22 +388,12 @@ func (c *Collector) readNetwork() (*NetworkMetrics, error) {
 }
 
 func readUptime() (int64, error) {
-	data, err := os.ReadFile("/proc/uptime")
-	if err != nil {
-		return 0, err
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 1 {
-		return 0, fmt.Errorf("invalid uptime")
-	}
-	v, _ := strconv.ParseFloat(fields[0], 64)
-	return int64(v), nil
+	return hostinfo.ReadUptime()
 }
 
 func readVMPid(vmID string) (int, error) {
 	data, err := os.ReadFile(fmt.Sprintf("/var/lib/rymevisor/vms/%s/qemu.pid", vmID))
 	if err != nil {
-		// Try .dev path
 		data, err = os.ReadFile(fmt.Sprintf(".dev-logs/%s.pid", vmID))
 		if err != nil {
 			return 0, err
@@ -547,9 +404,6 @@ func readVMPid(vmID string) (int, error) {
 }
 
 func readProcessCPU(pid int) (float64, error) {
-	// Read /proc/<pid>/stat and calculate CPU usage
-	// For simplicity, return 0 and let caller handle
-	// We can read utime + stime / uptime
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return 0, err
@@ -560,14 +414,11 @@ func readProcessCPU(pid int) (float64, error) {
 	}
 	utime, _ := strconv.ParseInt(fields[13], 10, 64)
 	stime, _ := strconv.ParseInt(fields[14], 10, 64)
-	// starttime field 21
 	starttime, _ := strconv.ParseInt(fields[21], 10, 64)
-	// Get system uptime and clock tick
 	uptimeData, _ := os.ReadFile("/proc/uptime")
 	uptimeFields := strings.Fields(string(uptimeData))
 	uptime, _ := strconv.ParseFloat(uptimeFields[0], 64)
-	clkTck := 100.0 // usually 100
-	// Calculate CPU time in seconds
+	clkTck := 100.0
 	cpuTime := float64(utime+stime) / clkTck
 	elapsed := uptime - float64(starttime)/clkTck
 	if elapsed <= 0 {
@@ -634,15 +485,11 @@ func readVMDiskUsage(path string) (size, used int64, err error) {
 		return 0, 0, err
 	}
 	size = fi.Size()
-	// For qcow2, used is actual file size, which we just got
-	// For more accurate, we could use qemu-img info, but use file size
 	used = size
 	return size, used, nil
 }
 
 func readVMNetwork(vmID string) (*VMNetworkMetrics, error) {
-	// Try to find tap interface for VM (usually tap0 or vnet0)
-	// Read /proc/net/dev and look for tap or vnet
 	data, err := os.ReadFile("/proc/net/dev")
 	if err != nil {
 		return nil, err
@@ -666,9 +513,4 @@ func readVMNetwork(vmID string) (*VMNetworkMetrics, error) {
 		}
 	}
 	return &VMNetworkMetrics{RxBytes: rx, TxBytes: tx}, nil
-}
-
-func init() {
-	// Ensure we can read without importing extra
-	_ = bufio.NewReader
 }

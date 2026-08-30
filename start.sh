@@ -36,7 +36,6 @@ trap cleanup EXIT INT TERM
 # ── Load DB URL from /etc/rymevisor/config.env if it exists ──
 DB_URL="postgres://rymevisor:rymevisor@localhost:5432/rymevisor?sslmode=disable"
 NATS_URL="nats://localhost:4222"
-REDIS_ADDR="localhost:6379"
 JWT_SECRET="dev-secret-change-in-production"
 API_KEY=""
 
@@ -52,7 +51,6 @@ if [ -f /etc/rymevisor/config.env ]; then
   fi
   DB_URL="${RYMEVISOR_DATABASE_URL:-$DB_URL}"
   NATS_URL="${RYMEVISOR_NATS_URL:-$NATS_URL}"
-  REDIS_ADDR="${RYMEVISOR_REDIS_ADDR:-$REDIS_ADDR}"
   if [ -n "${RYMEVISOR_JWT_SECRET:-}" ]; then
     JWT_SECRET="$RYMEVISOR_JWT_SECRET"
   fi
@@ -116,7 +114,7 @@ stop_old_services() {
 start_infra() {
   step "Checking infrastructure..."
 
-  local PG_PORT=5432 RED_PORT=6379 NATS_PORT=4222 MINIO_PORT=9000
+  local PG_PORT=5432 NATS_PORT=4222 MINIO_PORT=9000
   local NEED_DOCKER=false
   local DOCKER_SERVICES=()
 
@@ -125,13 +123,6 @@ start_infra() {
   else
     NEED_DOCKER=true
     DOCKER_SERVICES+=(postgres)
-  fi
-
-  if port_in_use $RED_PORT; then
-    log "Redis already running on :$RED_PORT"
-  else
-    NEED_DOCKER=true
-    DOCKER_SERVICES+=(redis)
   fi
 
   if port_in_use $NATS_PORT; then
@@ -162,12 +153,6 @@ start_infra() {
             sleep 1; i=$((i + 1)); [ $i -ge 30 ] && { err "PostgreSQL not ready"; exit 1; }
           done
           log "  PostgreSQL ready"
-          ;;
-        redis)
-          until docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli ping >/dev/null 2>&1; do
-            sleep 1; i=$((i + 1)); [ $i -ge 15 ] && { err "Redis not ready"; exit 1; }
-          done
-          log "  Redis ready"
           ;;
         nats)
           until docker compose -f "$COMPOSE_FILE" exec -T nats nats-server --signal ldm=/data >/dev/null 2>&1; do
@@ -240,42 +225,42 @@ start_services() {
 
   # control-plane :8080
   if [ -f "$BIN_DIR/control-plane" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_REDIS_ADDR="$REDIS_ADDR" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8080" "$BIN_DIR/control-plane" > "$LOG_DIR/control-plane.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8080" "$BIN_DIR/control-plane" > "$LOG_DIR/control-plane.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  control-plane  -> :8080"
   fi
 
   # scheduler :8083
   if [ -f "$BIN_DIR/scheduler" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_REDIS_ADDR="$REDIS_ADDR" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8083" "$BIN_DIR/scheduler" > "$LOG_DIR/scheduler.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8083" "$BIN_DIR/scheduler" > "$LOG_DIR/scheduler.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  scheduler      -> :8083"
   fi
 
   # networking-engine :8084
   if [ -f "$BIN_DIR/networking-engine" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_REDIS_ADDR="$REDIS_ADDR" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8084" "$BIN_DIR/networking-engine" > "$LOG_DIR/networking-engine.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8084" "$BIN_DIR/networking-engine" > "$LOG_DIR/networking-engine.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  networking     -> :8084"
   fi
 
   # storage-manager :8085
   if [ -f "$BIN_DIR/storage-manager" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_REDIS_ADDR="$REDIS_ADDR" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8085" "$BIN_DIR/storage-manager" > "$LOG_DIR/storage-manager.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8085" "$BIN_DIR/storage-manager" > "$LOG_DIR/storage-manager.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  storage        -> :8085"
   fi
 
   # api-gateway :8081 (start last, proxies to all above)
   if [ -f "$BIN_DIR/api-gateway" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_REDIS_ADDR="$REDIS_ADDR" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8081" RYMEVISOR_CONTROL_PLANE_URL="localhost:8080" RYMEVISOR_NETWORK_URL="localhost:8084" RYMEVISOR_STORAGE_URL="localhost:8085" RYMEVISOR_SCHEDULER_URL="localhost:8083" "$BIN_DIR/api-gateway" > "$LOG_DIR/api-gateway.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8081" RYMEVISOR_CONTROL_PLANE_URL="localhost:8080" RYMEVISOR_NETWORK_URL="localhost:8084" RYMEVISOR_STORAGE_URL="localhost:8085" RYMEVISOR_SCHEDULER_URL="localhost:8083" "$BIN_DIR/api-gateway" > "$LOG_DIR/api-gateway.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  api-gateway    -> :8081"
   fi
 
   # node-agent (no HTTP, uses NATS)
   if [ -f "$BIN_DIR/node-agent" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_REDIS_ADDR="$REDIS_ADDR" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_NODE_ID="node-1" "$BIN_DIR/node-agent" > "$LOG_DIR/node-agent.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_NODE_ID="node-1" "$BIN_DIR/node-agent" > "$LOG_DIR/node-agent.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  node-agent     -> (NATS only)"
   fi

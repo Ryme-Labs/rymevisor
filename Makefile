@@ -36,7 +36,7 @@ stop:
 
 # Start infra containers only
 up:
-	docker compose -f deployments/docker/docker-compose.yml up -d postgres redis nats minio
+	docker compose -f deployments/docker/docker-compose.yml up -d postgres nats minio
 
 # Stop infra containers
 down:

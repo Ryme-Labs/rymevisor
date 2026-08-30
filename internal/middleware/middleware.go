@@ -108,10 +108,10 @@ func RequireAPIKey(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Allow websocket upgrade without API key check here if handler does its own check via query
-		// But we still enforce for all /api and /ws paths
+
+
 		if r.Header.Get("Upgrade") == "websocket" && r.URL.Path == "/ws/logs" {
-			// Let ws handler handle auth via query param as well
+
 		}
 
 		validKey := os.Getenv("RYMEVISOR_API_KEY")
@@ -133,15 +133,15 @@ func RequireAPIKey(next http.Handler) http.Handler {
 			provided = r.URL.Query().Get("key")
 		}
 		if provided == "" {
-			// Try Sec-WebSocket-Protocol header which browsers can set for ws auth
+
 			if proto := r.Header.Get("Sec-WebSocket-Protocol"); proto != "" {
-				// Protocol header may contain comma-separated values, check each
+
 				for _, p := range splitAndTrim(proto, ",") {
 					if p == validKey {
 						provided = p
 						break
 					}
-					// Also allow "Bearer <key>" style
+
 					if len(p) > 7 && p[:7] == "Bearer " && p[7:] == validKey {
 						provided = validKey
 						break
@@ -179,7 +179,7 @@ func splitAndTrim(s, sep string) []string {
 	return out
 }
 
-// ExtractAPIKey extracts API key from request (header or query) for websocket handlers.
+
 func ExtractAPIKey(r *http.Request) string {
 	if k := r.Header.Get("X-API-Key"); k != "" {
 		return k

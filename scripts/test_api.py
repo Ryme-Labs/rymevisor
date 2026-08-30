@@ -1364,6 +1364,13 @@ def test_vm_state(c: Client, s: TestSuite):
 def test_backups(c: Client, s: TestSuite):
     global CREATED_VM_ID
     vm_id = CREATED_VM_ID or "00000000-0000-0000-0000-000000000001"
+    # Ensure vm_id exists; if not, create a fresh VM for backup test
+    r_check = c.get(f"/api/v1/vms/{vm_id}")
+    if r_check.status != 200:
+        r_tmp = c.post("/api/v1/vms", {"name": f"bak-vm-{rnd(4)}", "vcpus": 1, "memory_mb": 512})
+        if r_tmp.status in (200, 201):
+            tmp_vm = r_tmp.body if "id" in r_tmp.body else r_tmp.body.get("vm") or {}
+            vm_id = get_id(tmp_vm) or vm_id
 
     s.begin_test("GET /api/v1/backups (list)")
     r = c.get("/api/v1/backups")
@@ -1495,6 +1502,28 @@ def main():
                 base_url = "http://localhost:8081"
         else:
             base_url = "http://localhost:8081"
+    # Auto-fallback: if 8081 control-plane is dead (bind conflict), try 18081
+    if base_url == "http://localhost:8081":
+        try:
+            probe = Client(base_url, api_key).get("/health")
+            if probe.status not in (200, 503):
+                raise Exception("probe failed")
+            # also probe vms endpoint; if 404, try 18081
+            probe2 = Client(base_url, api_key).get("/api/v1/vms")
+            if probe2.status == 404:
+                alt = "http://localhost:18081"
+                alt_probe = Client(alt, api_key).get("/api/v1/vms")
+                if alt_probe.status == 200:
+                    print(f"{Color.YELLOW}Note: 8081 control-plane appears stale (404), switching to {alt}{Color.RESET}")
+                    base_url = alt
+        except:
+            try:
+                alt = "http://localhost:18081"
+                alt_probe = Client(alt, api_key).get("/health")
+                if alt_probe.status in (200, 503):
+                    base_url = alt
+            except:
+                pass
     if not base_url:
         base_url = "http://localhost:8081"
     args.base_url = base_url

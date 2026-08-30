@@ -11,6 +11,16 @@ import (
 	"github.com/rymelabs/rymevisor/services/controlplane/domain"
 )
 
+
+
+
+
+
+
+
+
+
+
 type VMRepository struct {
 	pool *pgxpool.Pool
 }
@@ -60,14 +70,6 @@ func (r *VMRepository) Create(ctx context.Context, vm *domain.VirtualMachine) er
 		`,
 			disk.ID, vm.ID, disk.Name, disk.SizeBytes, disk.Type, disk.StoragePool, disk.ImageID, disk.Boot, disk.Order,
 		)
-		if err != nil && strings.Contains(err.Error(), "does not exist") {
-			_, err = tx.Exec(ctx, `
-				INSERT INTO vm_disks (id, vm_id, name, size_bytes, type, storage_pool, boot, "order")
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-			`,
-				disk.ID, vm.ID, disk.Name, disk.SizeBytes, disk.Type, disk.StoragePool, disk.Boot, disk.Order,
-			)
-		}
 		if err != nil {
 			return fmt.Errorf("vm_repo: insert disk: %w", err)
 		}
@@ -76,7 +78,7 @@ func (r *VMRepository) Create(ctx context.Context, vm *domain.VirtualMachine) er
 	for _, nic := range vm.NetworkInterfaces {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO vm_network_interfaces (id, vm_id, name, network_id, mac_address, ipv4_addresses, ipv6_addresses, is_primary)
-			VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6::inet[], $7::inet[], $8)
 		`,
 			nic.ID, vm.ID, nic.Name, nic.NetworkID, nic.MACAddress, nic.IPv4Addresses, nic.IPv6Addresses, nic.IsPrimary,
 		)
@@ -188,13 +190,72 @@ func (r *VMRepository) List(ctx context.Context, filter domain.VMFilter) ([]*dom
 		return nil, 0, fmt.Errorf("vm_repo: rows error: %w", err)
 	}
 
-	for _, vm := range vms {
-		if err := r.loadRelated(ctx, vm); err != nil {
+	if len(vms) > 0 {
+		if err := r.batchLoadRelated(ctx, vms); err != nil {
 			return nil, 0, err
 		}
 	}
 
 	return vms, total, nil
+}
+
+func (r *VMRepository) batchLoadRelated(ctx context.Context, vms []*domain.VirtualMachine) error {
+	vmIDs := make([]string, 0, len(vms))
+	vmMap := make(map[string]*domain.VirtualMachine, len(vms))
+	for _, vm := range vms {
+		vmIDs = append(vmIDs, vm.ID)
+		vmMap[vm.ID] = vm
+	}
+
+	diskRows, err := r.pool.Query(ctx, `
+		SELECT vm_id::text, id, name, size_bytes, type, storage_pool, COALESCE(image_id::text,''), boot, "order"
+		FROM vm_disks WHERE vm_id = ANY($1::uuid[]) ORDER BY "order"
+	`, vmIDs)
+	if err != nil {
+		return fmt.Errorf("vm_repo: batch query disks: %w", err)
+	}
+	defer diskRows.Close()
+	for diskRows.Next() {
+		var vmID string
+		var d domain.Disk
+		if err := diskRows.Scan(&vmID, &d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.ImageID, &d.Boot, &d.Order); err != nil {
+			return fmt.Errorf("vm_repo: scan disk: %w", err)
+		}
+		if vm, ok := vmMap[vmID]; ok {
+			vm.Disks = append(vm.Disks, d)
+		}
+	}
+	if err := diskRows.Err(); err != nil {
+		return err
+	}
+
+	nicRows, err := r.pool.Query(ctx, `
+		SELECT vm_id::text, id, name, network_id::text, mac_address, ipv4_addresses::text[], ipv6_addresses::text[], is_primary
+		FROM vm_network_interfaces WHERE vm_id = ANY($1::uuid[])
+	`, vmIDs)
+	if err != nil {
+		return fmt.Errorf("vm_repo: batch query nics: %w", err)
+	}
+	defer nicRows.Close()
+	for nicRows.Next() {
+		var vmID string
+		var n domain.NetworkInterface
+		var networkID *string
+		if err := nicRows.Scan(&vmID, &n.ID, &n.Name, &networkID, &n.MACAddress, &n.IPv4Addresses, &n.IPv6Addresses, &n.IsPrimary); err != nil {
+			return fmt.Errorf("vm_repo: scan nic: %w", err)
+		}
+		if networkID != nil {
+			n.NetworkID = *networkID
+		}
+		if vm, ok := vmMap[vmID]; ok {
+			vm.NetworkInterfaces = append(vm.NetworkInterfaces, n)
+		}
+	}
+	if err := nicRows.Err(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *VMRepository) Update(ctx context.Context, vm *domain.VirtualMachine) error {
@@ -240,50 +301,38 @@ func (r *VMRepository) UpdateStatus(ctx context.Context, id string, status domai
 	return nil
 }
 
+func (r *VMRepository) AssignNode(ctx context.Context, id, nodeID string) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE virtual_machines SET node_id = $1::uuid, updated_at = now() WHERE id = $2::uuid
+	`, nodeID, id)
+	if err != nil {
+		return fmt.Errorf("vm_repo: assign node: %w", err)
+	}
+	return nil
+}
+
 func (r *VMRepository) loadRelated(ctx context.Context, vm *domain.VirtualMachine) error {
 	diskRows, err := r.pool.Query(ctx, `
 		SELECT id, name, size_bytes, type, storage_pool, COALESCE(image_id::text,''), boot, "order"
 		FROM vm_disks WHERE vm_id = $1 ORDER BY "order"
 	`, vm.ID)
-	if err != nil && strings.Contains(err.Error(), "does not exist") {
-		// Fallback for DB without image_id column (pre-migration)
-		diskRows, err = r.pool.Query(ctx, `
-			SELECT id, name, size_bytes, type, storage_pool, boot, "order"
-			FROM vm_disks WHERE vm_id = $1 ORDER BY "order"
-		`, vm.ID)
-		if err != nil {
-			return fmt.Errorf("vm_repo: query disks: %w", err)
+	if err != nil {
+		return fmt.Errorf("vm_repo: query disks: %w", err)
+	}
+	defer diskRows.Close()
+	for diskRows.Next() {
+		var d domain.Disk
+		if err := diskRows.Scan(&d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.ImageID, &d.Boot, &d.Order); err != nil {
+			return fmt.Errorf("vm_repo: scan disk: %w", err)
 		}
-		defer diskRows.Close()
-		for diskRows.Next() {
-			var d domain.Disk
-			if err := diskRows.Scan(&d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.Boot, &d.Order); err != nil {
-				return fmt.Errorf("vm_repo: scan disk: %w", err)
-			}
-			vm.Disks = append(vm.Disks, d)
-		}
-		if err := diskRows.Err(); err != nil {
-			return err
-		}
-	} else {
-		if err != nil {
-			return fmt.Errorf("vm_repo: query disks: %w", err)
-		}
-		defer diskRows.Close()
-		for diskRows.Next() {
-			var d domain.Disk
-			if err := diskRows.Scan(&d.ID, &d.Name, &d.SizeBytes, &d.Type, &d.StoragePool, &d.ImageID, &d.Boot, &d.Order); err != nil {
-				return fmt.Errorf("vm_repo: scan disk: %w", err)
-			}
-			vm.Disks = append(vm.Disks, d)
-		}
-		if err := diskRows.Err(); err != nil {
-			return err
-		}
+		vm.Disks = append(vm.Disks, d)
+	}
+	if err := diskRows.Err(); err != nil {
+		return err
 	}
 
 	nicRows, err := r.pool.Query(ctx, `
-		SELECT id, name, network_id, mac_address, ipv4_addresses, ipv6_addresses, is_primary
+		SELECT id, name, network_id::text, mac_address, ipv4_addresses::text[], ipv6_addresses::text[], is_primary
 		FROM vm_network_interfaces WHERE vm_id = $1
 	`, vm.ID)
 	if err != nil {

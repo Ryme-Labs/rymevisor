@@ -6,13 +6,22 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/rymelabs/rymevisor/internal/ipam"
+	"github.com/rymelabs/rymevisor/internal/mac"
+	inats "github.com/rymelabs/rymevisor/internal/nats"
 	"github.com/rymelabs/rymevisor/services/controlplane/catalog"
 	"github.com/rymelabs/rymevisor/services/controlplane/domain"
 	"go.uber.org/zap"
 )
+
+type IPAMAllocator interface {
+	EnsureDefaultNetwork(ctx context.Context, organizationID string) (string, string, error)
+	AllocateIP(ctx context.Context, networkID string) (string, string, string, error)
+}
 
 type Service struct {
 	vmRepo     domain.VMRepository
@@ -22,12 +31,14 @@ type Service struct {
 	snapRepo   domain.SnapshotRepository
 	flavorRepo domain.FlavorRepository
 	keypairRepo domain.KeypairRepository
+	ipam       IPAMAllocator
 	publisher  EventPublisher
 	puller     *Puller
 	logger     *zap.Logger
 }
 
 type EventPublisher interface {
+	Publish(ctx context.Context, subject string, data []byte) error
 	PublishVMEvent(ctx context.Context, eventType, vmID string, data []byte) error
 	PublishNodeEvent(ctx context.Context, eventType, nodeID string, data []byte) error
 }
@@ -49,10 +60,6 @@ func NewService(
 		publisher:  publisher,
 		logger:     zap.NewNop(),
 	}
-}
-
-func (s *Service) SetPuller(puller *Puller) {
-	s.puller = puller
 }
 
 func (s *Service) SetLogger(logger *zap.Logger) {
@@ -82,12 +89,16 @@ func (s *Service) SetKeypairRepository(repo domain.KeypairRepository) {
 	s.keypairRepo = repo
 }
 
+func (s *Service) SetIPAMAllocator(ipam IPAMAllocator) {
+	s.ipam = ipam
+}
+
 func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*domain.VirtualMachine, error) {
 	if req.Name == "" {
 		return nil, fmt.Errorf("vm name is required")
 	}
 
-	// Resolve flavor if provided (e.g., "small", "medium", "large" or flavor ID)
+
 	if req.FlavorID != "" || req.Flavor != "" {
 		if s.flavorRepo != nil {
 			var flavor *domain.Flavor
@@ -103,14 +114,14 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 			if flavor == nil {
 				return nil, fmt.Errorf("flavor %q not found", req.Flavor+req.FlavorID)
 			}
-			// Override with flavor values if not explicitly set
+
 			if req.VCpus == 0 {
 				req.VCpus = flavor.VCpus
 			}
 			if req.MemoryMB == 0 {
 				req.MemoryMB = flavor.MemoryMB
 			}
-			// If no disks specified, use flavor disk size
+
 			if len(req.Disks) == 0 && flavor.DiskGB > 0 {
 				req.Disks = []domain.CreateDiskRequest{
 					{Name: "root", SizeBytes: flavor.DiskGB * 1024 * 1024 * 1024, Type: "qcow2", StoragePool: "default"},
@@ -121,7 +132,7 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 		}
 	}
 
-	// Resolve keypair if provided by name
+
 	if req.Keypair != "" && req.KeypairID == "" && s.keypairRepo != nil {
 		if kp, _ := s.keypairRepo.GetByName(ctx, req.Keypair, ""); kp != nil {
 			req.KeypairID = kp.ID
@@ -135,10 +146,20 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 		return nil, fmt.Errorf("memory must be at least 256 MB")
 	}
 
+
+
+
+	orgID := "00000000-0000-0000-0000-000000000000"
+	if req.Labels != nil && req.Labels["organization_id"] != "" {
+		orgID = req.Labels["organization_id"]
+	} else if req.Metadata != nil && req.Metadata["organization_id"] != "" {
+		orgID = req.Metadata["organization_id"]
+	}
+
 	vm := &domain.VirtualMachine{
 		ID:             uuid.New().String(),
 		Name:           req.Name,
-		OrganizationID: uuid.New().String(),
+		OrganizationID: orgID,
 		Status:         domain.VMStatusCreating,
 		VCpus:          req.VCpus,
 		MemoryMB:       req.MemoryMB,
@@ -178,17 +199,16 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 			diskReq := req.Disks[i]
 			imageID := diskReq.ImageID
 
-			// Resolve image alias like "ubuntu", "ubuntu-22.04", "debian"
+
 			if imageID == "" && diskReq.Image != "" {
 				if s.puller != nil {
 					if img, err := s.puller.ResolveAndEnsureImage(ctx, diskReq.Image); err == nil && img != nil {
 						imageID = img.ID
-						// Use image size if disk size not specified
+
 						if diskReq.SizeBytes == 0 && img.SizeBytes > 0 {
 							diskReq.SizeBytes = img.SizeBytes
 						}
 					} else if err != nil {
-						// Try catalog directly as fallback
 						if oi, cerr := catalog.ResolveImageAlias(diskReq.Image); cerr == nil {
 							if pulled, perr := s.PullOfficialImage(ctx, oi.OS, oi.OSVersion, oi.Architecture); perr == nil && pulled != nil {
 								imageID = pulled.ID
@@ -199,24 +219,24 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 						}
 					}
 				} else {
-					// Without puller, try DB lookup
+
 					if img, _ := s.imageRepo.GetByName(ctx, diskReq.Image); img != nil {
 						imageID = img.ID
 					} else if oi, err := catalog.ResolveImageAlias(diskReq.Image); err == nil {
-						// Auto-create DB entry for official image (without download)
-						// Caller should use /images/pull to actually download
+
+
 						return nil, fmt.Errorf("image %q not cached, pull it first via POST /api/v1/images/pull {\"os\":\"%s\",\"os_version\":\"%s\",\"architecture\":\"%s\"}", diskReq.Image, oi.OS, oi.OSVersion, oi.Architecture)
 					} else {
 						return nil, fmt.Errorf("unknown image %q", diskReq.Image)
 					}
 				}
 			} else if imageID != "" {
-				// Validate image exists
+
 				if s.puller != nil {
 					if img, err := s.puller.ResolveAndEnsureImage(ctx, imageID); err != nil {
 						return nil, fmt.Errorf("image %q: %w", imageID, err)
 					} else if img != nil {
-						imageID = img.ID // normalize to resolved ID
+						imageID = img.ID
 					}
 				} else {
 					if img, _ := s.imageRepo.GetByID(ctx, imageID); img == nil {
@@ -258,26 +278,98 @@ func (s *Service) CreateVM(ctx context.Context, req *domain.CreateVMRequest) (*d
 		}
 	}
 
+
+
+
 	if len(req.NetworkInterfaces) > 0 {
 		for i, nicReq := range req.NetworkInterfaces {
+			networkID := nicReq.NetworkID
+			if networkID == "" && s.ipam != nil {
+
+				defID, _, err := s.ipam.EnsureDefaultNetwork(ctx, orgID)
+				if err != nil {
+					return nil, fmt.Errorf("ensure default network: %w", err)
+				}
+				networkID = defID
+			}
+			nicID := uuid.New().String()
+			macAddr := mac.GenerateNICMAC(vm.ID, nicID)
+			var ipv4 []string
+			if s.ipam != nil && networkID != "" {
+				allocated, _, _, err := s.ipam.AllocateIP(ctx, networkID)
+				if err != nil {
+					return nil, fmt.Errorf("allocate IP in network %s: %w", networkID, err)
+				}
+				ipv4 = []string{allocated}
+			}
+			isPrimary := nicReq.IsPrimary
+			if i == 0 && !hasPrimary(req.NetworkInterfaces) {
+				isPrimary = true
+			}
 			vm.NetworkInterfaces = append(vm.NetworkInterfaces, domain.NetworkInterface{
-				ID:        uuid.New().String(),
-				Name:      fmt.Sprintf("eth%d", i),
-				NetworkID: nicReq.NetworkID,
-				IsPrimary: nicReq.IsPrimary,
+				ID:            nicID,
+				Name:          fmt.Sprintf("eth%d", i),
+				NetworkID:     networkID,
+				MACAddress:    macAddr,
+				IPv4Addresses: ipv4,
+				IsPrimary:     isPrimary,
 			})
 		}
 	} else {
+		networkID := ""
+		if s.ipam != nil {
+			defID, _, err := s.ipam.EnsureDefaultNetwork(ctx, orgID)
+			if err != nil {
+				return nil, fmt.Errorf("ensure default network: %w", err)
+			}
+			networkID = defID
+		}
+		nicID := uuid.New().String()
+		macAddr := mac.GenerateNICMAC(vm.ID, nicID)
+		var ipv4 []string
+		if s.ipam != nil && networkID != "" {
+			allocated, _, _, err := s.ipam.AllocateIP(ctx, networkID)
+			if err != nil {
+				return nil, fmt.Errorf("allocate IP in default network: %w", err)
+			}
+			ipv4 = []string{allocated}
+		}
 		vm.NetworkInterfaces = []domain.NetworkInterface{
 			{
-				ID:        uuid.New().String(),
-				Name:      "eth0",
-				IsPrimary: true,
+				ID:            nicID,
+				Name:          "eth0",
+				NetworkID:     networkID,
+				MACAddress:    macAddr,
+				IPv4Addresses: ipv4,
+				IsPrimary:     true,
 			},
 		}
 	}
 
-	if err := s.vmRepo.Create(ctx, vm); err != nil {
+
+	for attempt := 0; attempt < 3; attempt++ {
+		err := s.vmRepo.Create(ctx, vm)
+		if err == nil {
+			break
+		}
+		if isUniqueViolation(err) {
+			s.logger.Warn("IP/MAC collision on concurrent create, retrying", zap.Error(err), zap.String("vm_id", vm.ID))
+
+			for idx := range vm.NetworkInterfaces {
+				nic := &vm.NetworkInterfaces[idx]
+				if s.ipam != nil && nic.NetworkID != "" {
+					allocated, _, _, aerr := s.ipam.AllocateIP(ctx, nic.NetworkID)
+					if aerr == nil {
+						nic.IPv4Addresses = []string{allocated}
+					}
+					nic.MACAddress = mac.GenerateNICMAC(vm.ID, nic.ID+fmt.Sprintf("-%d", attempt))
+				}
+			}
+			if attempt == 2 {
+				return nil, fmt.Errorf("create vm: %w", err)
+			}
+			continue
+		}
 		return nil, fmt.Errorf("create vm: %w", err)
 	}
 
@@ -358,22 +450,185 @@ func (s *Service) PowerOn(ctx context.Context, id string) (*domain.VirtualMachin
 		return nil, fmt.Errorf("vm not found")
 	}
 
-	if vm.Status != domain.VMStatusStopped && vm.Status != domain.VMStatusPaused {
+	if vm.Status != domain.VMStatusStopped && vm.Status != domain.VMStatusPaused && vm.Status != domain.VMStatusCreating {
 		return nil, fmt.Errorf("vm must be stopped or paused to power on (current status: %s)", vm.Status)
+	}
+
+
+	if vm.NodeID == nil || *vm.NodeID == "" {
+		nodes, _, err := s.nodeRepo.List(ctx, domain.NodeFilter{Status: "online", Page: 1, PerPage: 1})
+		if err == nil && len(nodes) > 0 {
+			nodeID := nodes[0].ID
+			_ = s.vmRepo.AssignNode(ctx, id, nodeID)
+			vm.NodeID = &nodeID
+			s.logger.Info("auto-scheduled VM to node", zap.String("vm_id", id), zap.String("node_id", nodeID))
+		} else {
+
+			nodes, _, _ = s.nodeRepo.List(ctx, domain.NodeFilter{Page: 1, PerPage: 1})
+			if len(nodes) > 0 {
+				nodeID := nodes[0].ID
+				_ = s.vmRepo.AssignNode(ctx, id, nodeID)
+				vm.NodeID = &nodeID
+			}
+		}
 	}
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusRunning); err != nil {
 		return nil, fmt.Errorf("update status: %w", err)
 	}
-
 	vm.Status = domain.VMStatusRunning
+
+
+	if s.publisher != nil && vm.NodeID != nil && *vm.NodeID != "" {
+		if err := s.publishVMStart(ctx, vm); err != nil {
+			s.logger.Warn("publish VM start command failed", zap.Error(err), zap.String("vm_id", id))
+		}
+	}
 
 	eventData, _ := json.Marshal(map[string]string{"vm_id": id})
 	if s.publisher != nil {
 		_ = s.publisher.PublishVMEvent(ctx, "started", id, eventData)
 	}
-
 	return vm, nil
+}
+
+func (s *Service) publishVMStart(ctx context.Context, vm *domain.VirtualMachine) error {
+	if s.publisher == nil {
+		return nil
+	}
+
+	type nicConfig struct {
+		NetworkID  string `json:"network_id"`
+		MACAddress string `json:"mac_address"`
+		IPAddress  string `json:"ip_address"`
+		Gateway    string `json:"gateway,omitempty"`
+		Bridge     string `json:"bridge,omitempty"`
+		Name       string `json:"name,omitempty"`
+	}
+	type vmStartCfg struct {
+		Name              string      `json:"name"`
+		VCPUs             int32       `json:"vcpus"`
+		MemoryMB          int64       `json:"memory_mb"`
+		MACAddress        string      `json:"mac_address,omitempty"`
+		SSHKey            string      `json:"ssh_key,omitempty"`
+		ImageID           string      `json:"image_id,omitempty"`
+		SizeBytes         int64       `json:"size_bytes,omitempty"`
+		MachineType       string      `json:"machine_type,omitempty"`
+		NetworkInterfaces []nicConfig `json:"network_interfaces,omitempty"`
+	}
+	type vmCommand struct {
+		Action string      `json:"action"`
+		VMID   string      `json:"vm_id"`
+		Config *vmStartCfg `json:"config,omitempty"`
+	}
+
+	var nics []nicConfig
+	legacyMAC := ""
+	for i, nic := range vm.NetworkInterfaces {
+		macAddr := nic.MACAddress
+		if macAddr == "" {
+			macAddr = mac.GenerateNICMAC(vm.ID, nic.ID)
+		}
+		if i == 0 {
+			legacyMAC = macAddr
+		}
+		ip := ""
+		if len(nic.IPv4Addresses) > 0 {
+			ip = nic.IPv4Addresses[0]
+		}
+		gw := ""
+		if ip != "" {
+			if g, err := gatewayFromIP(ip); err == nil {
+				gw = g
+			}
+		}
+		bridge, err := ipam.BridgeForNetwork(nic.NetworkID)
+		if err != nil {
+			return fmt.Errorf("bridge for network %s: %w", nic.NetworkID, err)
+		}
+		nics = append(nics, nicConfig{
+			NetworkID:  nic.NetworkID,
+			MACAddress: macAddr,
+			IPAddress:  ip,
+			Gateway:    gw,
+			Bridge:     bridge,
+			Name:       nic.Name,
+		})
+	}
+	if len(nics) == 0 {
+		return fmt.Errorf("no NICs provided for VM %s", vm.ID)
+	}
+
+	sshKey := ""
+	if vm.SSHKeyID != nil && *vm.SSHKeyID != "" && s.keypairRepo != nil {
+		if kp, _ := s.keypairRepo.GetByID(ctx, *vm.SSHKeyID); kp != nil {
+			sshKey = kp.PublicKey
+		}
+	}
+	imageID := ""
+	sizeBytes := int64(0)
+	if len(vm.Disks) > 0 {
+		for _, d := range vm.Disks {
+			if d.Boot {
+				imageID = d.ImageID
+				sizeBytes = d.SizeBytes
+				break
+			}
+		}
+		if imageID == "" {
+			imageID = vm.Disks[0].ImageID
+			sizeBytes = vm.Disks[0].SizeBytes
+		}
+	}
+
+	cfg := &vmStartCfg{
+		Name:              vm.Name,
+		VCPUs:             vm.VCpus,
+		MemoryMB:          vm.MemoryMB,
+		MACAddress:        legacyMAC,
+		SSHKey:            sshKey,
+		ImageID:           imageID,
+		SizeBytes:         sizeBytes,
+		MachineType:       vm.MachineType,
+		NetworkInterfaces: nics,
+	}
+	cmd := vmCommand{Action: "start", VMID: vm.ID, Config: cfg}
+	data, _ := json.Marshal(cmd)
+	subject := inats.SubjectForNode(*vm.NodeID, "start")
+	return s.publisher.Publish(ctx, subject, data)
+}
+
+func gatewayFromIP(cidrOrIP string) (string, error) {
+	_, ipNet, err := parseCIDR(cidrOrIP)
+	if err != nil {
+		return "", err
+	}
+	gwIP := make([]byte, len(ipNet.IP))
+	copy(gwIP, ipNet.IP)
+	if len(gwIP) == 16 {
+		if v4 := net.ParseIP(ipNet.IP.String()).To4(); v4 != nil {
+			gwIP = v4
+		}
+	}
+	for i := len(gwIP) - 1; i >= 0; i-- {
+		gwIP[i]++
+		if gwIP[i] != 0 {
+			break
+		}
+	}
+	return net.IP(gwIP).String(), nil
+}
+
+func parseCIDR(cidr string) (net.IP, *net.IPNet, error) {
+	if ip, ipNet, err := net.ParseCIDR(cidr); err == nil {
+		return ip, ipNet, nil
+	}
+	if ip := net.ParseIP(cidr); ip != nil {
+
+		_, ipNet, _ := net.ParseCIDR(ip.String() + "/24")
+		return ip, ipNet, nil
+	}
+	return nil, nil, fmt.Errorf("invalid CIDR %q", cidr)
 }
 
 func (s *Service) PowerOff(ctx context.Context, id string, force bool) (*domain.VirtualMachine, error) {
@@ -391,6 +646,17 @@ func (s *Service) PowerOff(ctx context.Context, id string, force bool) (*domain.
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusShuttingDown); err != nil {
 		return nil, fmt.Errorf("update status: %w", err)
+	}
+
+
+	if s.publisher != nil && vm.NodeID != nil && *vm.NodeID != "" {
+		type cmd struct {
+			Action string `json:"action"`
+			VMID   string `json:"vm_id"`
+			Force  bool   `json:"force,omitempty"`
+		}
+		data, _ := json.Marshal(cmd{Action: "stop", VMID: id, Force: force})
+		_ = s.publisher.Publish(ctx, inats.SubjectForNode(*vm.NodeID, "stop"), data)
 	}
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusStopped); err != nil {
@@ -422,6 +688,16 @@ func (s *Service) Reboot(ctx context.Context, id string, force bool) (*domain.Vi
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusRebooting); err != nil {
 		return nil, fmt.Errorf("update status: %w", err)
+	}
+
+	if s.publisher != nil && vm.NodeID != nil && *vm.NodeID != "" {
+		type cmd struct {
+			Action string `json:"action"`
+			VMID   string `json:"vm_id"`
+			Force  bool   `json:"force,omitempty"`
+		}
+		data, _ := json.Marshal(cmd{Action: "reboot", VMID: id, Force: force})
+		_ = s.publisher.Publish(ctx, inats.SubjectForNode(*vm.NodeID, "reboot"), data)
 	}
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusRunning); err != nil {
@@ -561,16 +837,59 @@ func (s *Service) Clone(ctx context.Context, id string, name string, nodeID stri
 	}
 
 	for i, nic := range source.NetworkInterfaces {
+		nicID := uuid.New().String()
+		macAddr := mac.GenerateNICMAC(cloned.ID, nicID)
+		var ipv4 []string
+		if s.ipam != nil && nic.NetworkID != "" {
+			if allocated, _, _, err := s.ipam.AllocateIP(ctx, nic.NetworkID); err == nil {
+				ipv4 = []string{allocated}
+			}
+		}
+		if macAddr == "" {
+			macAddr = mac.GenerateNICMAC(cloned.ID, fmt.Sprintf("%d", i))
+		}
 		cloned.NetworkInterfaces = append(cloned.NetworkInterfaces, domain.NetworkInterface{
-			ID:        uuid.New().String(),
-			Name:      fmt.Sprintf("eth%d", i),
-			NetworkID: nic.NetworkID,
-			IsPrimary: nic.IsPrimary,
+			ID:            nicID,
+			Name:          fmt.Sprintf("eth%d", i),
+			NetworkID:     nic.NetworkID,
+			MACAddress:    macAddr,
+			IPv4Addresses: ipv4,
+			IsPrimary:     nic.IsPrimary,
 		})
 	}
 
+	if len(cloned.NetworkInterfaces) == 0 && s.ipam != nil {
+		defID, _, _ := s.ipam.EnsureDefaultNetwork(ctx, cloned.OrganizationID)
+		nicID := uuid.New().String()
+		allocated, _, _, _ := s.ipam.AllocateIP(ctx, defID)
+		cloned.NetworkInterfaces = []domain.NetworkInterface{{
+			ID:            nicID,
+			Name:          "eth0",
+			NetworkID:     defID,
+			MACAddress:    mac.GenerateNICMAC(cloned.ID, nicID),
+			IPv4Addresses: []string{allocated},
+			IsPrimary:     true,
+		}}
+	}
+
 	if err := s.vmRepo.Create(ctx, cloned); err != nil {
-		return nil, fmt.Errorf("create cloned vm: %w", err)
+
+		if isUniqueViolation(err) {
+			for idx := range cloned.NetworkInterfaces {
+				n := &cloned.NetworkInterfaces[idx]
+				if s.ipam != nil && n.NetworkID != "" {
+					if a, _, _, e := s.ipam.AllocateIP(ctx, n.NetworkID); e == nil {
+						n.IPv4Addresses = []string{a}
+					}
+				}
+				n.MACAddress = mac.GenerateNICMAC(cloned.ID, n.ID+"-retry")
+			}
+			if err2 := s.vmRepo.Create(ctx, cloned); err2 != nil {
+				return nil, fmt.Errorf("create cloned vm: %w", err2)
+			}
+		} else {
+			return nil, fmt.Errorf("create cloned vm: %w", err)
+		}
 	}
 
 	eventData, _ := json.Marshal(map[string]string{
@@ -786,21 +1105,7 @@ func (s *Service) GetOfficialImage(ctx context.Context, osName, version, arch st
 	return catalog.Find(osName, version, arch)
 }
 
-func (s *Service) ResolveImage(ctx context.Context, ref string) (*domain.Image, error) {
-	if s.puller == nil {
-		// Fallback to DB only
-		if img, _ := s.imageRepo.GetByID(ctx, ref); img != nil {
-			return img, nil
-		}
-		if img, _ := s.imageRepo.GetByName(ctx, ref); img != nil {
-			return img, nil
-		}
-		return nil, fmt.Errorf("image %q not found", ref)
-	}
-	return s.puller.ResolveAndEnsureImage(ctx, ref)
-}
 
-// ── Flavors ─────────────────────────────────────────────────
 
 func (s *Service) CreateFlavor(ctx context.Context, req *domain.CreateFlavorRequest) (*domain.Flavor, error) {
 	if s.flavorRepo == nil {
@@ -864,7 +1169,24 @@ func (s *Service) DeleteFlavor(ctx context.Context, id string) error {
 	return s.flavorRepo.Delete(ctx, id)
 }
 
-// ── Keypairs ────────────────────────────────────────────────
+func hasPrimary(nics []domain.CreateNetworkInterfaceRequest) bool {
+	for _, n := range nics {
+		if n.IsPrimary {
+			return true
+		}
+	}
+	return false
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") || strings.Contains(msg, "idx_vm_nics")
+}
+
+
 
 func fingerprintPublicKey(pubKey string) string {
 	parts := strings.Fields(pubKey)
@@ -873,7 +1195,7 @@ func fingerprintPublicKey(pubKey string) string {
 	}
 	decoded, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
-		// Try RawStdEncoding
+
 		decoded, err = base64.RawStdEncoding.DecodeString(parts[1])
 		if err != nil {
 			return ""

@@ -11,6 +11,10 @@ import (
 	"github.com/rymelabs/rymevisor/services/controlplane/domain"
 )
 
+
+
+
+
 type ImageRepository struct {
 	pool *pgxpool.Pool
 }
@@ -25,7 +29,6 @@ func (r *ImageRepository) Create(ctx context.Context, img *domain.Image) error {
 		return fmt.Errorf("image_repo: marshal tags: %w", err)
 	}
 
-	// Try with source_url column, fallback without for backwards compat before migration
 	_, err = r.pool.Exec(ctx, `
 		INSERT INTO images (id, name, description, os, os_version, architecture, type,
 			size_bytes, status, checksum, source_url, tags)
@@ -34,16 +37,6 @@ func (r *ImageRepository) Create(ctx context.Context, img *domain.Image) error {
 		img.ID, img.Name, img.Description, img.OS, img.OSVersion, img.Architecture,
 		img.Type, img.SizeBytes, img.Status, img.Checksum, img.SourceURL, tagsJSON,
 	)
-	if err != nil && strings.Contains(err.Error(), "does not exist") {
-		_, err = r.pool.Exec(ctx, `
-			INSERT INTO images (id, name, description, os, os_version, architecture, type,
-				size_bytes, status, checksum, tags)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		`,
-			img.ID, img.Name, img.Description, img.OS, img.OSVersion, img.Architecture,
-			img.Type, img.SizeBytes, img.Status, img.Checksum, tagsJSON,
-		)
-	}
 	if err != nil {
 		return fmt.Errorf("image_repo: insert: %w", err)
 	}
@@ -64,24 +57,10 @@ func (r *ImageRepository) GetByID(ctx context.Context, id string) (*domain.Image
 		&img.CreatedAt, &img.UpdatedAt,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
-			// Fallback without source_url
-			err = r.pool.QueryRow(ctx, `
-				SELECT id, name, description, os, os_version, architecture, type,
-					size_bytes, status, checksum, tags, created_at, updated_at
-				FROM images WHERE id = $1
-			`, id).Scan(
-				&img.ID, &img.Name, &img.Description, &img.OS, &img.OSVersion, &img.Architecture,
-				&img.Type, &img.SizeBytes, &img.Status, &img.Checksum, &tagsJSON,
-				&img.CreatedAt, &img.UpdatedAt,
-			)
+		if err == pgx.ErrNoRows {
+			return nil, nil
 		}
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("image_repo: get by id: %w", err)
-		}
+		return nil, fmt.Errorf("image_repo: get by id: %w", err)
 	}
 
 	if err := json.Unmarshal(tagsJSON, &img.Tags); err != nil {
@@ -105,23 +84,10 @@ func (r *ImageRepository) GetByName(ctx context.Context, name string) (*domain.I
 		&img.CreatedAt, &img.UpdatedAt,
 	)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
-			err = r.pool.QueryRow(ctx, `
-				SELECT id, name, description, os, os_version, architecture, type,
-					size_bytes, status, checksum, tags, created_at, updated_at
-				FROM images WHERE name = $1 LIMIT 1
-			`, name).Scan(
-				&img.ID, &img.Name, &img.Description, &img.OS, &img.OSVersion, &img.Architecture,
-				&img.Type, &img.SizeBytes, &img.Status, &img.Checksum, &tagsJSON,
-				&img.CreatedAt, &img.UpdatedAt,
-			)
+		if err == pgx.ErrNoRows {
+			return nil, nil
 		}
-		if err != nil {
-			if err == pgx.ErrNoRows {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("image_repo: get by name: %w", err)
-		}
+		return nil, fmt.Errorf("image_repo: get by name: %w", err)
 	}
 
 	if err := json.Unmarshal(tagsJSON, &img.Tags); err != nil {
@@ -176,7 +142,6 @@ func (r *ImageRepository) List(ctx context.Context, filter domain.ImageFilter) (
 	}
 	offset := (page - 1) * perPage
 
-	// Try with source_url, fallback without
 	listQuery := fmt.Sprintf(`
 		SELECT id, name, description, os, os_version, architecture, type,
 			size_bytes, status, checksum, COALESCE(source_url,''), tags, created_at, updated_at
@@ -188,17 +153,6 @@ func (r *ImageRepository) List(ctx context.Context, filter domain.ImageFilter) (
 	argsWithLimit := append(append([]any{}, args...), perPage, offset)
 
 	rows, err := r.pool.Query(ctx, listQuery, argsWithLimit...)
-	if err != nil && strings.Contains(err.Error(), "does not exist") {
-		listQuery = fmt.Sprintf(`
-			SELECT id, name, description, os, os_version, architecture, type,
-				size_bytes, status, checksum, tags, created_at, updated_at
-			FROM images
-			WHERE %s
-			ORDER BY created_at DESC
-			LIMIT $%d OFFSET $%d
-		`, whereClause, argIdx, argIdx+1)
-		rows, err = r.pool.Query(ctx, listQuery, argsWithLimit...)
-	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("image_repo: list query: %w", err)
 	}
@@ -209,25 +163,13 @@ func (r *ImageRepository) List(ctx context.Context, filter domain.ImageFilter) (
 		var img domain.Image
 		var tagsJSON []byte
 
-		// Need to handle both query variants
-		if strings.Contains(listQuery, "source_url") {
-			err := rows.Scan(
-				&img.ID, &img.Name, &img.Description, &img.OS, &img.OSVersion, &img.Architecture,
-				&img.Type, &img.SizeBytes, &img.Status, &img.Checksum, &img.SourceURL, &tagsJSON,
-				&img.CreatedAt, &img.UpdatedAt,
-			)
-			if err != nil {
-				return nil, 0, fmt.Errorf("image_repo: scan: %w", err)
-			}
-		} else {
-			err := rows.Scan(
-				&img.ID, &img.Name, &img.Description, &img.OS, &img.OSVersion, &img.Architecture,
-				&img.Type, &img.SizeBytes, &img.Status, &img.Checksum, &tagsJSON,
-				&img.CreatedAt, &img.UpdatedAt,
-			)
-			if err != nil {
-				return nil, 0, fmt.Errorf("image_repo: scan: %w", err)
-			}
+		err := rows.Scan(
+			&img.ID, &img.Name, &img.Description, &img.OS, &img.OSVersion, &img.Architecture,
+			&img.Type, &img.SizeBytes, &img.Status, &img.Checksum, &img.SourceURL, &tagsJSON,
+			&img.CreatedAt, &img.UpdatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("image_repo: scan: %w", err)
 		}
 		if err := json.Unmarshal(tagsJSON, &img.Tags); err != nil {
 			return nil, 0, fmt.Errorf("image_repo: unmarshal tags: %w", err)
@@ -253,14 +195,6 @@ func (r *ImageRepository) Update(ctx context.Context, img *domain.Image) error {
 		WHERE id=$12
 	`, img.Name, img.Description, img.OS, img.OSVersion, img.Architecture,
 		img.Type, img.SizeBytes, img.Status, img.Checksum, img.SourceURL, tagsJSON, img.ID)
-	if err != nil && strings.Contains(err.Error(), "does not exist") {
-		_, err = r.pool.Exec(ctx, `
-			UPDATE images SET name=$1, description=$2, os=$3, os_version=$4, architecture=$5,
-				type=$6, size_bytes=$7, status=$8, checksum=$9, tags=$10, updated_at=now()
-			WHERE id=$11
-		`, img.Name, img.Description, img.OS, img.OSVersion, img.Architecture,
-			img.Type, img.SizeBytes, img.Status, img.Checksum, tagsJSON, img.ID)
-	}
 	if err != nil {
 		return fmt.Errorf("image_repo: update: %w", err)
 	}

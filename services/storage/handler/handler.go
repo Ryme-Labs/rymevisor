@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rymelabs/rymevisor/internal/jsonutil"
 	"github.com/rymelabs/rymevisor/services/storage"
 	"github.com/rymelabs/rymevisor/services/storage/domain"
 )
@@ -35,30 +36,20 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/api/v1/storage/snapshots/{id}/restore", h.RestoreSnapshot)
 }
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
-}
-
 func (h *Handler) CreatePool(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreatePoolRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	pool, err := h.svc.CreatePool(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, pool)
+	jsonutil.WriteJSON(w, http.StatusCreated, pool)
 }
 
 func (h *Handler) GetPool(w http.ResponseWriter, r *http.Request) {
@@ -66,25 +57,25 @@ func (h *Handler) GetPool(w http.ResponseWriter, r *http.Request) {
 
 	pool, err := h.svc.GetPool(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		jsonutil.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if pool == nil {
-		writeError(w, http.StatusNotFound, "pool not found")
+		jsonutil.WriteError(w, http.StatusNotFound, "pool not found")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pool)
+	jsonutil.WriteJSON(w, http.StatusOK, pool)
 }
 
 func (h *Handler) ListPools(w http.ResponseWriter, r *http.Request) {
 	pools, err := h.svc.ListPools(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		jsonutil.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"pools": pools,
 	})
 }
@@ -92,17 +83,17 @@ func (h *Handler) ListPools(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateVolume(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateVolumeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	vol, err := h.svc.CreateVolume(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, vol)
+	jsonutil.WriteJSON(w, http.StatusCreated, vol)
 }
 
 func (h *Handler) GetVolume(w http.ResponseWriter, r *http.Request) {
@@ -110,15 +101,15 @@ func (h *Handler) GetVolume(w http.ResponseWriter, r *http.Request) {
 
 	vol, err := h.svc.GetVolume(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		jsonutil.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if vol == nil {
-		writeError(w, http.StatusNotFound, "volume not found")
+		jsonutil.WriteError(w, http.StatusNotFound, "volume not found")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, vol)
+	jsonutil.WriteJSON(w, http.StatusOK, vol)
 }
 
 func (h *Handler) ListVolumes(w http.ResponseWriter, r *http.Request) {
@@ -139,11 +130,11 @@ func (h *Handler) ListVolumes(w http.ResponseWriter, r *http.Request) {
 		PerPage: perPage,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		jsonutil.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"volumes": volumes,
 		"total":   total,
 		"page":    page,
@@ -156,11 +147,11 @@ func (h *Handler) DeleteVolume(w http.ResponseWriter, r *http.Request) {
 	force, _ := strconv.ParseBool(r.URL.Query().Get("force"))
 
 	if err := h.svc.DeleteVolume(r.Context(), id, force); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "volume deleted"})
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]string{"message": "volume deleted"})
 }
 
 func (h *Handler) ResizeVolume(w http.ResponseWriter, r *http.Request) {
@@ -170,17 +161,17 @@ func (h *Handler) ResizeVolume(w http.ResponseWriter, r *http.Request) {
 		SizeBytes int64 `json:"size_bytes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	vol, err := h.svc.ResizeVolume(r.Context(), id, req.SizeBytes)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, vol)
+	jsonutil.WriteJSON(w, http.StatusOK, vol)
 }
 
 func (h *Handler) CloneVolume(w http.ResponseWriter, r *http.Request) {
@@ -190,17 +181,17 @@ func (h *Handler) CloneVolume(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	vol, err := h.svc.CloneVolume(r.Context(), id, req.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, vol)
+	jsonutil.WriteJSON(w, http.StatusCreated, vol)
 }
 
 func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -210,28 +201,28 @@ func (h *Handler) CreateSnapshot(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		jsonutil.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	snap, err := h.svc.CreateSnapshot(r.Context(), volumeID, req.Name)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, snap)
+	jsonutil.WriteJSON(w, http.StatusCreated, snap)
 }
 
 func (h *Handler) DeleteSnapshot(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.DeleteSnapshot(r.Context(), id); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"message": "snapshot deleted"})
+	jsonutil.WriteJSON(w, http.StatusOK, map[string]string{"message": "snapshot deleted"})
 }
 
 func (h *Handler) RestoreSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -239,9 +230,9 @@ func (h *Handler) RestoreSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	vol, err := h.svc.RestoreSnapshot(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		jsonutil.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, vol)
+	jsonutil.WriteJSON(w, http.StatusOK, vol)
 }

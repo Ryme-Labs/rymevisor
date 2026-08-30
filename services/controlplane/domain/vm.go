@@ -85,6 +85,7 @@ type VMRepository interface {
 	Update(ctx context.Context, vm *VirtualMachine) error
 	Delete(ctx context.Context, id string) error
 	UpdateStatus(ctx context.Context, id string, status VMStatus) error
+	AssignNode(ctx context.Context, id, nodeID string) error
 }
 
 type VMFilter struct {
@@ -125,7 +126,7 @@ type CreateVMRequest struct {
 	Name               string                      `json:"name"`
 	NodeID             string                      `json:"node_id"`
 	FlavorID           string                      `json:"flavor_id,omitempty"`
-	Flavor             string                      `json:"flavor,omitempty"` // alias name like "small", "medium"
+	Flavor             string                      `json:"flavor,omitempty"`
 	VCpus              int32                       `json:"vcpus"`
 	MemoryMB           int64                       `json:"memory_mb"`
 	CPUModel           string                      `json:"cpu_model"`
@@ -135,7 +136,7 @@ type CreateVMRequest struct {
 	Hugepages          bool                        `json:"hugepages"`
 	CloudInit          string                      `json:"cloud_init"`
 	KeypairID          string                      `json:"keypair_id,omitempty"`
-	Keypair            string                      `json:"keypair,omitempty"` // name
+	Keypair            string                      `json:"keypair,omitempty"`
 	Disks              []CreateDiskRequest         `json:"disks"`
 	NetworkInterfaces  []CreateNetworkInterfaceRequest `json:"network_interfaces"`
 	Tags               []string                    `json:"tags"`
@@ -149,7 +150,7 @@ type CreateDiskRequest struct {
 	Type        string `json:"type"`
 	StoragePool string `json:"storage_pool"`
 	ImageID     string `json:"image_id,omitempty"`
-	Image       string `json:"image,omitempty"` // alias: ubuntu, ubuntu-22.04, debian-12, etc.
+	Image       string `json:"image,omitempty"`
 }
 
 type CreateNetworkInterfaceRequest struct {

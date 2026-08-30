@@ -303,7 +303,7 @@ func (s *Service) generateToken(user *domain.User, expiry time.Duration) (string
 	return SignToken(claims, s.jwtSecret)
 }
 
-// --- JWT helpers ---
+
 
 func SignToken(claims domain.JWTClaims, secret []byte) (string, error) {
 	header := base64URLEncode([]byte(`{"alg":"HS256","typ":"JWT"}`))
@@ -362,7 +362,7 @@ func base64URLDecode(s string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(s)
 }
 
-// --- Token hashing ---
+
 
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
