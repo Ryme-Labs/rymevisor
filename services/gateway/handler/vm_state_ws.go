@@ -15,7 +15,7 @@ import (
 var vmStateUpgraderGW = ws.Upgrader
 
 func (g *Gateway) HandleVMState(w http.ResponseWriter, r *http.Request) {
-	if !wsAuth(r) {
+	if !ws.Auth(r) {
 		http.Error(w, `{"error":"invalid or missing API key"}`, http.StatusUnauthorized)
 		return
 	}

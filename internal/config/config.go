@@ -119,15 +119,6 @@ func envIntOrDefault(key string, fallback int) int {
 	return fallback
 }
 
-func envBoolOrDefault(key string, fallback bool) bool {
-	if v := os.Getenv(key); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			return b
-		}
-	}
-	return fallback
-}
-
 func envDurationOrDefault(key string, fallback time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
