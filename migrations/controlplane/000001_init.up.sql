@@ -1,4 +1,3 @@
--- Control Plane schema
 
 CREATE TYPE node_status AS ENUM ('online', 'offline', 'draining', 'maintenance', 'error');
 CREATE TYPE vm_status AS ENUM ('creating', 'running', 'stopped', 'paused', 'rebooting', 'shutting_down', 'terminated', 'error', 'migrating', 'snapshottting');

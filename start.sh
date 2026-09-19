@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# RymeVisor Local Dev Script
-# Starts infra (skips if already running) + builds + runs all services
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="$ROOT/deployments/docker/docker-compose.yml"
@@ -33,7 +31,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# ── Load DB URL from /etc/rymevisor/config.env if it exists ──
 DB_URL="postgres://rymevisor:rymevisor@localhost:5432/rymevisor?sslmode=disable"
 NATS_URL="nats://localhost:4222"
 JWT_SECRET="dev-secret-change-in-production"
@@ -43,7 +40,6 @@ if [ -f /etc/rymevisor/config.env ]; then
   if [ -r /etc/rymevisor/config.env ]; then
     set -a; source /etc/rymevisor/config.env 2>/dev/null || true; set +a
   elif command -v sudo &>/dev/null; then
-    # Try via sudo (may prompt for password)
     TMP_ENV=$(sudo cat /etc/rymevisor/config.env 2>/dev/null || true)
     if [ -n "$TMP_ENV" ]; then
       set -a; eval "$TMP_ENV" 2>/dev/null || true; set +a
@@ -57,9 +53,7 @@ if [ -f /etc/rymevisor/config.env ]; then
   API_KEY="${RYMEVISOR_API_KEY:-$API_KEY}"
 fi
 
-# Parse DB_URL for psql (user, password, host, port, db)
 parse_db_url() {
-  # postgres://user:pass@host:port/db?params
   local url="$DB_URL"
   DB_USER=$(echo "$url" | sed -n 's|.*://\([^:]*\):.*|\1|p')
   DB_PASS=$(echo "$url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p')
@@ -73,14 +67,11 @@ parse_db_url() {
   DB_NAME="${DB_NAME:-rymevisor}"
 }
 
-# ── Check if a port is in use ─────────────────────────────
 port_in_use() {
   (echo >/dev/tcp/localhost/"$1") 2>/dev/null && return 0 || return 1
 }
 
-# ── Stop old systemd services that conflict on ports ──────
 stop_old_services() {
-  # Kill leftover dev services from previous run
   if [ -f "$PIDS_FILE" ]; then
     step "Stopping leftover dev services..."
     while read -r pid; do
@@ -110,7 +101,6 @@ stop_old_services() {
   fi
 }
 
-# ── Start infra (skip what's already running) ─────────────
 start_infra() {
   step "Checking infrastructure..."
 
@@ -168,7 +158,6 @@ start_infra() {
   fi
 }
 
-# ── Database migrations ───────────────────────────────────
 run_migrations() {
   step "Running database migrations..."
   parse_db_url
@@ -192,7 +181,6 @@ run_migrations() {
   log "Migrations complete"
 }
 
-# ── Build services ────────────────────────────────────────
 build_services() {
   step "Building services..."
   mkdir -p "$BIN_DIR"
@@ -216,49 +204,42 @@ build_services() {
   log "Build complete"
 }
 
-# ── Start services ────────────────────────────────────────
 start_services() {
   step "Starting services..."
   mkdir -p "$LOG_DIR"
   rm -f "$PIDS_FILE"
   touch "$PIDS_FILE"
 
-  # control-plane :8080
   if [ -f "$BIN_DIR/control-plane" ]; then
     RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8080" "$BIN_DIR/control-plane" > "$LOG_DIR/control-plane.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  control-plane  -> :8080"
   fi
 
-  # scheduler :8083
   if [ -f "$BIN_DIR/scheduler" ]; then
     RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8083" "$BIN_DIR/scheduler" > "$LOG_DIR/scheduler.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  scheduler      -> :8083"
   fi
 
-  # networking-engine :8084
   if [ -f "$BIN_DIR/networking-engine" ]; then
     RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8084" "$BIN_DIR/networking-engine" > "$LOG_DIR/networking-engine.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  networking     -> :8084"
   fi
 
-  # storage-manager :8085
   if [ -f "$BIN_DIR/storage-manager" ]; then
     RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8085" "$BIN_DIR/storage-manager" > "$LOG_DIR/storage-manager.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  storage        -> :8085"
   fi
 
-  # api-gateway :8081 (start last, proxies to all above)
   if [ -f "$BIN_DIR/api-gateway" ]; then
     RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8081" RYMEVISOR_CONTROL_PLANE_URL="localhost:8080" RYMEVISOR_NETWORK_URL="localhost:8084" RYMEVISOR_STORAGE_URL="localhost:8085" RYMEVISOR_SCHEDULER_URL="localhost:8083" "$BIN_DIR/api-gateway" > "$LOG_DIR/api-gateway.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
     log "  api-gateway    -> :8081"
   fi
 
-  # node-agent (no HTTP, uses NATS)
   if [ -f "$BIN_DIR/node-agent" ]; then
     RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_NODE_ID="node-1" "$BIN_DIR/node-agent" > "$LOG_DIR/node-agent.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
@@ -268,14 +249,12 @@ start_services() {
   log "All services started"
 }
 
-# ── Status check ──────────────────────────────────────────
 check_status() {
   echo ""
   step "Checking health (waiting 5s for services to boot)..."
 
   sleep 5
 
-  # api-gateway uses /health, others use /health/live
   check_one() {
     local name=$1 port=$2 path=$3
     if curl -sf "http://localhost:$port$path" >/dev/null 2>&1; then
@@ -302,7 +281,6 @@ check_status() {
   echo ""
 }
 
-# ── Main ──────────────────────────────────────────────────
 main() {
   echo ""
   log "RymeVisor Local Dev"

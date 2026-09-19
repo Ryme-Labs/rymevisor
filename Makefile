@@ -1,13 +1,10 @@
 .PHONY: all build generate migrate up down dev stop test lint clean
 
-# Default target
 all: generate build
 
-# Generate protobuf code
 generate:
 	buf generate
 
-# Build all services
 build:
 	go build -o bin/control-plane ./cmd/control-plane
 	go build -o bin/node-agent ./cmd/node-agent
@@ -17,15 +14,12 @@ build:
 	go build -o bin/storage-manager ./cmd/storage-manager
 	@if [ -d ./cmd/auth-service ]; then go build -o bin/auth-service ./cmd/auth-service; fi
 
-# Build a specific service
 build-%:
 	go build -o bin/$* ./cmd/$*
 
-# Start everything locally (infra + all services)
 dev:
 	./start.sh
 
-# Stop all services and infra
 stop:
 	@if [ -f .dev-pids ]; then \
 		while read -r pid; do kill "$$pid" 2>/dev/null || true; done < .dev-pids; \
@@ -34,37 +28,29 @@ stop:
 	@docker compose -f deployments/docker/docker-compose.yml down 2>/dev/null || true
 	@echo "Stopped."
 
-# Start infra containers only
 up:
 	docker compose -f deployments/docker/docker-compose.yml up -d postgres nats minio
 
-# Stop infra containers
 down:
 	docker compose -f deployments/docker/docker-compose.yml down
 
-# Run database migrations
 migrate:
 	@echo "Running migrations..."
 
-# Run all tests
 test:
 	go test ./...
 
-# Run tests with coverage
 test-cover:
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-# Lint
 lint:
 	golangci-lint run ./...
 
-# Format code
 fmt:
 	gofmt -s -w .
 	goimports -w .
 
-# Tidy modules
 tidy:
 	go work sync
 	@for dir in $$(find . -name "go.mod" -exec dirname {} \;); do \
@@ -72,16 +58,13 @@ tidy:
 		cd $$dir && go mod tidy && cd -; \
 	done
 
-# Clean build artifacts
 clean:
 	rm -rf bin/
 	rm -f coverage.out
 
-# Docker build
 docker-build:
 	docker compose -f deployments/docker/docker-compose.yml build
 
-# Show help
 help:
 	@echo "Available targets:"
 	@echo "  dev          - Start everything locally (infra + all services)"

@@ -52,6 +52,7 @@ func main() {
 		r.Handle("/health/live", hh.Liveness())
 		r.Handle("/health/ready", hh.Readiness())
 		var httpHandler http.Handler = r
+		httpHandler = middleware.RequireAPIKey(httpHandler)
 		httpHandler = middleware.RequestTracing(httpHandler)
 		httpHandler = middleware.CORS()(httpHandler)
 		httpHandler = middleware.Logger(httpHandler)

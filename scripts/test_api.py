@@ -166,9 +166,6 @@ def safe_len(obj):
     return len(obj)
 
 
-# ============================================================
-# Test Suite: Health Checks
-# ============================================================
 
 def test_health(c: Client, s: TestSuite):
     for path in ["/health", "/health/live", "/health/ready"]:
@@ -180,9 +177,6 @@ def test_health(c: Client, s: TestSuite):
             s.fail_test(f"expected 200/503, got {r.status}")
 
 
-# ============================================================
-# Test Suite: API Key Auth
-# ============================================================
 
 def test_api_key(c: Client, s: TestSuite):
     s.begin_test("GET /api/v1/vms (valid API key)")
@@ -212,9 +206,6 @@ def test_api_key(c: Client, s: TestSuite):
         s.fail_test(f"expected 401, got {r.status}")
 
 
-# ============================================================
-# Test Suite: VMs
-# ============================================================
 
 CREATED_VM_ID = ""
 
@@ -290,9 +281,6 @@ def test_vms(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/204/400/404, got {r.status}")
 
 
-# ============================================================
-# Test Suite: Nodes
-# ============================================================
 
 CREATED_NODE_ID = ""
 
@@ -346,9 +334,6 @@ def test_nodes(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/202/404/409, got {r.status}")
 
 
-# ============================================================
-# Test Suite: Networks
-# ============================================================
 
 CREATED_NETWORK_ID = ""
 
@@ -416,9 +401,6 @@ def test_networks(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/204/404, got {r.status}")
 
 
-# ============================================================
-# Test Suite: Storage
-# ============================================================
 
 CREATED_POOL_ID = ""
 CREATED_VOLUME_ID = ""
@@ -498,9 +480,6 @@ def test_storage(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/204/404, got {r.status}")
 
 
-# ============================================================
-# Test Suite: Scheduler
-# ============================================================
 
 def test_scheduler(c: Client, s: TestSuite):
     s.begin_test("GET /api/v1/scheduler/jobs")
@@ -519,9 +498,6 @@ def test_scheduler(c: Client, s: TestSuite):
         s.fail_test(f"unexpected status {r.status}")
 
 
-# ============================================================
-# Test Suite: Images
-# ============================================================
 
 def test_images(c: Client, s: TestSuite):
     s.begin_test("GET /api/v1/images (list)")
@@ -549,9 +525,6 @@ def test_images(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/201, got {r.status}: {r.body}")
 
 
-# ============================================================
-# Test Suite: Official Images Catalog (IaaS)
-# ============================================================
 
 def test_official_images(c: Client, s: TestSuite):
     s.begin_test("GET /api/v1/images/official (catalog)")
@@ -567,17 +540,11 @@ def test_official_images(c: Client, s: TestSuite):
     else:
         s.fail_test(f"expected 200, got {r.status}: {r.body}")
 
-    # Check alias resolution works via VM creation later, just verify catalog content
     for alias in ["ubuntu", "debian"]:
         s.begin_test(f"GET /api/v1/images/official contains alias {alias}")
-        # catalog already fetched, just check alias can be resolved by pull endpoint
-        # Use tiny check: try to find alias in catalog names or via pull dry-run
         s.pass_test("alias check skipped (pull test will verify)")
 
 
-# ============================================================
-# Test Suite: Image Auto-Pull (AWS-like)
-# ============================================================
 
 CREATED_PULL_IMAGE_ID = ""
 
@@ -636,9 +603,6 @@ def test_image_pull(c: Client, s: TestSuite):
         s.fail_test(f"expected 400/404, got {r.status}")
 
 
-# ============================================================
-# Test Suite: Flavors (IaaS instance types)
-# ============================================================
 
 CREATED_FLAVOR_ID = ""
 
@@ -702,9 +666,6 @@ def test_flavors(c: Client, s: TestSuite):
         s.fail_test(f"expected 404, got {r.status}")
 
 
-# ============================================================
-# Test Suite: Keypairs (IaaS SSH keys)
-# ============================================================
 
 CREATED_KEYPAIR_ID = ""
 TEST_SSH_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7VbqznJ3q1wO5q4k4T8m9n0p1q2r3s4t5u6v7w8x9y0z1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o6p7q8r9s0t1u2v3w4x5y6z7 user@test"
@@ -763,12 +724,8 @@ def test_keypairs(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/204, got {r.status}")
 
 
-# ============================================================
-# Test Suite: VM with Image Auto-Pull (AWS-like)
-# ============================================================
 
 def test_vm_with_image(c: Client, s: TestSuite):
-    # Ensure we have a flavor and keypair for this test
     flavor_name = f"vmflav-{rnd(4)}"
     s.begin_test(f"Setup: create flavor {flavor_name} for VM test")
     r = c.post("/api/v1/flavors", {"name": flavor_name, "vcpus": 1, "memory_mb": 1024, "disk_gb": 20})
@@ -777,7 +734,6 @@ def test_vm_with_image(c: Client, s: TestSuite):
         flavor_id = get_id(r.body if "id" in r.body else r.body)
         s.pass_test(f"flavor {flavor_id}")
     else:
-        # fallback to seeded small
         flavor_name = "small"
         s.pass_test(f"using seeded flavor {flavor_name}")
 
@@ -791,11 +747,9 @@ def test_vm_with_image(c: Client, s: TestSuite):
     else:
         s.pass_test("keypair setup skipped")
 
-    # Test 1: VM with image alias "ubuntu" (should auto-pull)
     s.begin_test("POST /api/v1/vms with image:ubuntu (auto-pull)")
     vm_name = f"test-vm-img-{rnd(4)}"
     body = {"name": vm_name, "vcpus": 1, "memory_mb": 1024, "disks": [{"name": "root", "type": "qcow2", "storage_pool": "default", "image": "ubuntu"}]}
-    # Add flavor/keypair if available
     if flavor_id:
         body["flavor_id"] = flavor_id
     elif flavor_name:
@@ -835,7 +789,6 @@ def test_vm_with_image(c: Client, s: TestSuite):
     if r.status in (200, 204):
         s.pass_test(f"status={r.status}")
     else:
-        # Try without force then with PowerOff
         c.post(f"/api/v1/vms/{vm_id}/power-off", {"force": True})
         time.sleep(0.5)
         r = c.delete(f"/api/v1/vms/{vm_id}?force=true")
@@ -844,7 +797,6 @@ def test_vm_with_image(c: Client, s: TestSuite):
         else:
             s.fail_test(f"expected 200/204, got {r.status}")
 
-    # Test 2: VM with debian image alias
     s.begin_test("POST /api/v1/vms with image:debian (auto-pull debian)")
     vm_name2 = f"test-vm-deb-{rnd(4)}"
     r = c.post("/api/v1/vms", {"name": vm_name2, "vcpus": 1, "memory_mb": 1024, "disks": [{"image": "debian"}]})
@@ -856,7 +808,6 @@ def test_vm_with_image(c: Client, s: TestSuite):
     else:
         s.fail_test(f"expected 200/201, got {r.status}: {r.body}")
 
-    # Test 3: VM with flavor only (no image) should still work (empty disk)
     s.begin_test("POST /api/v1/vms with flavor small (no image, empty disk)")
     r = c.post("/api/v1/vms", {"name": f"test-vm-flav-{rnd(4)}", "flavor": "small"})
     if r.status in (200, 201):
@@ -870,24 +821,19 @@ def test_vm_with_image(c: Client, s: TestSuite):
     else:
         s.fail_test(f"expected 200/201, got {r.status}: {r.body}")
 
-    # Cleanup flavor/keypair
     if flavor_id:
         c.delete(f"/api/v1/flavors/{flavor_id}")
     if kp_id:
         c.delete(f"/api/v1/keypairs/{kp_id}")
 
 
-# ============================================================
-# Test Suite: WebSocket Logs & Console (same API key)
-# ============================================================
 
 def test_websocket(c: Client, s: TestSuite):
-    # Try to import websocket client, skip if not available
     try:
         import websocket as ws_client
     except ImportError:
         try:
-            import websockets  # async lib, not used here
+            import websockets  
             ws_client = None
         except ImportError:
             ws_client = None
@@ -896,15 +842,11 @@ def test_websocket(c: Client, s: TestSuite):
             s.skip_test("websocket-client not installed (pip install websocket-client)")
             return
 
-    # Derive ws URLs from base_url (http -> ws)
     base = c.base_url
     ws_base = base.replace("http://", "ws://").replace("https://", "wss://")
-    # Use same API key via query param (same env variable)
     api_key = c.api_key
 
-    # Helper to test ws connection (uses query param auth, same as HTTP X-API-Key)
     def ws_connect(url, timeout=5, use_header=False, header_key=None):
-        # For query-param auth, don't send header (so invalid query can be tested)
         headers = []
         if use_header:
             k = header_key if header_key else api_key
@@ -916,7 +858,6 @@ def test_websocket(c: Client, s: TestSuite):
                 ws = ws_client.create_connection(url, timeout=timeout)
             return ws, None
         except Exception as e:
-            # Try with Sec-WebSocket-Protocol as fallback
             if use_header and headers:
                 try:
                     ws = ws_client.create_connection(url, timeout=timeout, header=[f"Sec-WebSocket-Protocol: {k}"])
@@ -925,7 +866,6 @@ def test_websocket(c: Client, s: TestSuite):
                     return None, str(e) + " | " + str(e2)
             return None, str(e)
 
-    # Helper to try multiple ws URLs (gateway vs control-plane paths)
     def try_ws(paths, query_extra=""):
         for p in paths:
             url = f"{ws_base}{p}?api_key={api_key}{query_extra}"
@@ -934,10 +874,8 @@ def test_websocket(c: Client, s: TestSuite):
                 return ws, url, None
         return None, None, err
 
-    # Test 1: Valid API key via query param should succeed
     s.begin_test("WebSocket /ws/logs with valid API key (query ?api_key=)")
     paths_to_try = ["/api/v1/ws/logs", "/ws/logs", "/api/v1/ws/logs", "/ws/logs"]
-    # Actually try both gateway and control-plane paths
     ws = None
     err = ""
     for path in ["/api/v1/ws/logs", "/ws/logs"]:
@@ -978,7 +916,6 @@ def test_websocket(c: Client, s: TestSuite):
         else:
             s.fail_test(f"ws dial failed: {str(err)[:100] if err else 'unknown'}")
 
-    # Test 2: Invalid API key should be rejected (401 or handshake fail)
     s.begin_test("WebSocket /ws/logs with invalid API key should be rejected")
     ws_bad = None
     err_bad = ""
@@ -1008,7 +945,6 @@ def test_websocket(c: Client, s: TestSuite):
             else:
                 s.fail_test(f"expected rejection, got dial err: {str(err_bad)[:80] if err_bad else ''}")
 
-    # Test 3: Valid key via header X-API-Key (same as HTTP)
     s.begin_test("WebSocket /ws/logs with X-API-Key header (same env key)")
     ws_h = None
     for path in ["/api/v1/ws/logs", "/ws/logs"]:
@@ -1033,7 +969,6 @@ def test_websocket(c: Client, s: TestSuite):
     if not ws_h:
         s.skip_test(f"header auth not supported, query param works")
 
-    # Test 4: Console websocket for VM (if VM exists)
     s.begin_test("WebSocket /ws/console with vm_id (requires existing VM)")
     vm_name = f"test-ws-vm-{rnd(4)}"
     r = c.post("/api/v1/vms", {"name": vm_name, "vcpus": 1, "memory_mb": 512})
@@ -1062,16 +997,10 @@ def test_websocket(c: Client, s: TestSuite):
             s.fail_test(f"console dial failed: {str(err_c)[:80] if err_c else 'unknown'}")
         c.delete(f"/api/v1/vms/{vm_id}?force=true")
 
-    # Test 5: Check that same RYMEVISOR_API_KEY env is used (no separate ws key)
     s.begin_test("WebSocket uses same RYMEVISOR_API_KEY env (no separate secret)")
-    # This is more of a documentation test: ensure wsAuth uses same env
-    # We already verified via above tests that valid HTTP key works for ws
     s.pass_test("same env key verified via previous tests")
 
 
-# ============================================================
-# Test Suite: Metrics Streaming (system + VM, realtime)
-# ============================================================
 
 def test_metrics(c: Client, s: TestSuite):
     try:
@@ -1092,7 +1021,6 @@ def test_metrics(c: Client, s: TestSuite):
         except Exception as e:
             return None, str(e)
 
-    # Test 1: System metrics via ws
     s.begin_test("WebSocket /ws/metrics system (realtime, api_key query)")
     ws = None
     for path in ["/api/v1/ws/metrics", "/ws/metrics"]:
@@ -1106,7 +1034,6 @@ def test_metrics(c: Client, s: TestSuite):
             msg = ws.recv()
             data = json.loads(msg) if msg else {}
             sys_data = data.get("system") or data.get("system", {})
-            # Check for a to z: cpu, memory, disk, network, load, uptime
             has_cpu = "cpu" in str(msg)
             has_mem = "memory" in str(msg)
             has_disk = "disk" in str(msg)
@@ -1114,12 +1041,10 @@ def test_metrics(c: Client, s: TestSuite):
             has_load = "load" in str(msg) or "load_avg" in str(msg)
             if has_cpu and has_mem and has_disk and has_net:
                 s.pass_test(f"system metrics ok (cpu,mem,disk,net present)")
-                # Check internet is included (network total)
                 if "total_rx_bytes" in str(msg) or "rx_bytes" in str(msg):
                     s.pass_test("internet/network bytes present")
                 else:
                     s.pass_test("system metrics received")
-                # Try second message for realtime
                 try:
                     msg2 = ws.recv()
                     if msg2 and len(msg2) > 10:
@@ -1134,14 +1059,12 @@ def test_metrics(c: Client, s: TestSuite):
         except Exception as e:
             s.fail_test(f"metrics recv failed: {e}")
     else:
-        # Check if endpoint exists via HTTP 400
         r = c.get("/ws/metrics?api_key=" + api_key)
         if r.status == 404:
             s.fail_test(f"metrics ws not found (404), rebuild? err={err[:60] if err else ''}")
         else:
             s.fail_test(f"metrics ws dial failed: {str(err)[:80] if err else ''}")
 
-    # Test 2: System metrics with interval param
     s.begin_test("WebSocket /ws/metrics with interval=1s")
     ws = None
     for path in ["/api/v1/ws/metrics", "/ws/metrics"]:
@@ -1160,9 +1083,7 @@ def test_metrics(c: Client, s: TestSuite):
     else:
         s.fail_test(f"interval ws failed: {str(err)[:60] if err else ''}")
 
-    # Test 3: VM metrics
     s.begin_test("WebSocket /ws/metrics/vm/{id} for VM (realtime)")
-    # Create temp VM
     vm_name = f"test-metrics-vm-{rnd(4)}"
     r = c.post("/api/v1/vms", {"name": vm_name, "vcpus": 1, "memory_mb": 512})
     vm_id = get_id(r.body if "id" in r.body else r.body) if r.status in (200, 201) else ""
@@ -1184,7 +1105,6 @@ def test_metrics(c: Client, s: TestSuite):
                 if vm_data.get("vm_id") == vm_id or vm_data.get("name"):
                     s.pass_test(f"vm metrics ok for {vm_id[:8]}...")
                 else:
-                    # Check for vm_metrics type
                     if data.get("type") == "vm_metrics" and "vm" in data:
                         s.pass_test(f"vm metrics type ok")
                     else:
@@ -1196,7 +1116,6 @@ def test_metrics(c: Client, s: TestSuite):
             s.fail_test(f"vm metrics ws dial failed: {str(err)[:80] if err else ''}")
         c.delete(f"/api/v1/vms/{vm_id}?force=true")
 
-    # Test 4: Invalid API key for metrics should be rejected
     s.begin_test("WebSocket /ws/metrics with invalid key should be rejected")
     bad_url = f"{ws_base}/api/v1/ws/metrics?api_key=bad-invalid-key-123"
     ws_bad, err_bad = ws_connect_metrics(bad_url)
@@ -1211,7 +1130,6 @@ def test_metrics(c: Client, s: TestSuite):
         if err_bad and ("401" in str(err_bad) or "400" in str(err_bad)):
             s.pass_test(f"rejected as expected ({str(err_bad)[:40]})")
         else:
-            # Check HTTP 401 for invalid key
             saved = c.api_key
             c.api_key = "bad-invalid-key-123"
             r2 = c.get("/api/v1/vms")
@@ -1221,10 +1139,7 @@ def test_metrics(c: Client, s: TestSuite):
             else:
                 s.fail_test(f"expected rejection, got {str(err_bad)[:60] if err_bad else ''}")
 
-    # Test 5: Check metrics contain internet (network total) and all fields a to z
     s.begin_test("Metrics contain internet and all fields a-z")
-    # Already checked cpu,mem,disk,net, but also check for internet via network total
-    # Do a quick direct fetch via ws again
     for path in ["/api/v1/ws/metrics", "/ws/metrics"]:
         url = f"{ws_base}{path}?api_key={api_key}"
         ws, err = ws_connect_metrics(url)
@@ -1244,9 +1159,6 @@ def test_metrics(c: Client, s: TestSuite):
         s.fail_test("could not verify a-z metrics")
 
 
-# ============================================================
-# Test Suite: VM State Streaming (websocket, same API key)
-# ============================================================
 
 def test_vm_state(c: Client, s: TestSuite):
     try:
@@ -1267,7 +1179,6 @@ def test_vm_state(c: Client, s: TestSuite):
         except Exception as e:
             return None, str(e)
 
-    # Create a VM to watch its state
     vm_name = f"test-state-vm-{rnd(4)}"
     s.begin_test(f"Setup: create VM {vm_name} for state streaming")
     r = c.post("/api/v1/vms", {"name": vm_name, "vcpus": 1, "memory_mb": 512, "disks": [{"image": "ubuntu"}]})
@@ -1277,7 +1188,6 @@ def test_vm_state(c: Client, s: TestSuite):
         return
     s.pass_test(f"created {vm_id[:8]}...")
 
-    # Test 1: VM state via query param
     s.begin_test("WebSocket /ws/vm/{id}/state with valid API key (state streaming)")
     ws = None
     for path in [f"/api/v1/ws/vm/{vm_id}/state", f"/ws/vm/{vm_id}/state"]:
@@ -1297,14 +1207,12 @@ def test_vm_state(c: Client, s: TestSuite):
                 ws.close()
                 c.delete(f"/api/v1/vms/{vm_id}?force=true")
                 return
-            # Wait for state message
             msg2 = ws.recv()
             data2 = json.loads(msg2) if msg2 else {}
             if data2.get("type") == "state" and data2.get("status"):
                 s.pass_test(f"state streaming ok: {data2.get('status')}")
             else:
                 s.pass_test(f"state msg received: {data2.get('type')}")
-            # Check for image progress if VM has image
             try:
                 ws.settimeout(2)
                 msg3 = ws.recv()
@@ -1322,7 +1230,6 @@ def test_vm_state(c: Client, s: TestSuite):
         c.delete(f"/api/v1/vms/{vm_id}?force=true")
         return
 
-    # Test 2: Invalid key should be rejected
     s.begin_test("WebSocket /ws/vm/{id}/state with invalid key should be rejected")
     bad_url = f"{ws_base}/api/v1/ws/vm/{vm_id}/state?api_key=bad-invalid-key-123"
     ws_bad, err_bad = ws_connect_state(bad_url)
@@ -1337,7 +1244,6 @@ def test_vm_state(c: Client, s: TestSuite):
         if err_bad and ("401" in str(err_bad) or "400" in str(err_bad)):
             s.pass_test(f"rejected as expected ({str(err_bad)[:40]})")
         else:
-            # Check HTTP 401
             saved = c.api_key
             c.api_key = "bad-invalid-key-123"
             r2 = c.get("/api/v1/vms")
@@ -1347,24 +1253,17 @@ def test_vm_state(c: Client, s: TestSuite):
             else:
                 s.fail_test(f"expected rejection, got {str(err_bad)[:60] if err_bad else ''}")
 
-    # Test 3: Check that VM state includes creating and image logs
     s.begin_test("VM state includes creating + image logs")
-    # The previous state messages already verified, just check that we got at least one state
     s.pass_test("verified via previous state streaming")
 
-    # Cleanup
     c.delete(f"/api/v1/vms/{vm_id}?force=true")
     s.pass_test(f"cleaned up {vm_id[:8]}...")
 
 
-# ============================================================
-# Test Suite: Backups
-# ============================================================
 
 def test_backups(c: Client, s: TestSuite):
     global CREATED_VM_ID
     vm_id = CREATED_VM_ID or "00000000-0000-0000-0000-000000000001"
-    # Ensure vm_id exists; if not, create a fresh VM for backup test
     r_check = c.get(f"/api/v1/vms/{vm_id}")
     if r_check.status != 200:
         r_tmp = c.post("/api/v1/vms", {"name": f"bak-vm-{rnd(4)}", "vcpus": 1, "memory_mb": 512})
@@ -1397,9 +1296,6 @@ def test_backups(c: Client, s: TestSuite):
         s.fail_test(f"expected 200/201, got {r.status}: {r.body}")
 
 
-# ============================================================
-# Test Suite: Cross-Cutting
-# ============================================================
 
 def test_cross_cutting(c: Client, s: TestSuite):
     s.begin_test("GET /api/v1/nonexistent (404)")
@@ -1431,9 +1327,6 @@ def test_cross_cutting(c: Client, s: TestSuite):
         s.fail_test(f"expected 400/422/500, got {r.status}")
 
 
-# ============================================================
-# Test Suites Registry
-# ============================================================
 
 ALL_SUITES = {
     "health": ("Health Checks", test_health),
@@ -1502,13 +1395,11 @@ def main():
                 base_url = "http://localhost:8081"
         else:
             base_url = "http://localhost:8081"
-    # Auto-fallback: if 8081 control-plane is dead (bind conflict), try 18081
     if base_url == "http://localhost:8081":
         try:
             probe = Client(base_url, api_key).get("/health")
             if probe.status not in (200, 503):
                 raise Exception("probe failed")
-            # also probe vms endpoint; if 404, try 18081
             probe2 = Client(base_url, api_key).get("/api/v1/vms")
             if probe2.status == 404:
                 alt = "http://localhost:18081"

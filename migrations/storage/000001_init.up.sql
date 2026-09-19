@@ -1,4 +1,3 @@
--- Storage service schema
 
 CREATE TYPE storage_driver AS ENUM ('qcow2', 'lvm_thin', 'zfs', 'nfs', 'ceph');
 CREATE TYPE volume_status AS ENUM ('available', 'in_use', 'creating', 'deleting', 'error');

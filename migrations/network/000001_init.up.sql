@@ -1,4 +1,3 @@
--- Networking service schema
 
 CREATE TYPE network_type AS ENUM ('private', 'public');
 CREATE TYPE firewall_action AS ENUM ('allow', 'deny');
