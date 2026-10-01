@@ -27,7 +27,7 @@ func main() {
 		if hostname == "" {
 			hostname = "localhost"
 		}
-		agent := nodeagent.NewAgent(nodeID, hostname, js, logger)
+		agent := nodeagent.NewAgent(nodeID, hostname, js, logger, os.Getenv("RYMEVISOR_VMS_PATH"), cfg.Storage.ImagesPath)
 		if err := agent.SubscribeCommands(ctx); err != nil {
 			logger.Fatal("failed to subscribe to commands", zap.Error(err))
 		}
