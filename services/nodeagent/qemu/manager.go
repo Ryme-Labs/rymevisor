@@ -133,10 +133,26 @@ func (m *Manager) StartVM(ctx context.Context, cfg VMConfig) error {
 		Setsid: true,
 	}
 
-	output, err := cmd.CombinedOutput()
+	stdoutLog, err := os.Create(filepath.Join(dir, "qemu-stdout.log"))
 	if err != nil {
-		return fmt.Errorf("start qemu: %w: %s", err, string(output))
+		return fmt.Errorf("create qemu stdout log: %w", err)
 	}
+	stderrLog, err := os.Create(filepath.Join(dir, "qemu-stderr.log"))
+	if err != nil {
+		_ = stdoutLog.Close()
+		return fmt.Errorf("create qemu stderr log: %w", err)
+	}
+	cmd.Stdout = stdoutLog
+	cmd.Stderr = stderrLog
+
+	if err := cmd.Start(); err != nil {
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
+		return fmt.Errorf("start qemu: %w", err)
+	}
+	_ = cmd.Process.Release()
+	_ = stdoutLog.Close()
+	_ = stderrLog.Close()
 
 	if err := m.waitForSocket(cfg.QMPSocket, 10*time.Second); err != nil {
 		return fmt.Errorf("wait for qmp socket: %w", err)
