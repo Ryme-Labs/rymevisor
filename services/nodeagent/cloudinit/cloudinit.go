@@ -25,6 +25,7 @@ type NetworkConfig struct {
 
 type NetworkInterface struct {
 	Name        string
+	MACAddress  string
 	Addresses   []string
 	Gateway     string
 	Nameservers []string
