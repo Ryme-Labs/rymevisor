@@ -122,15 +122,6 @@ func GenerateUserDataFromString(hostname, sshKey, user, password string) []byte 
 	if hostname != "" {
 		fmt.Fprintf(&buf, "hostname: %s\n", hostname)
 	}
-	if sshKey != "" {
-		sshKeys := strings.Split(sshKey, "\n")
-		if len(sshKeys) > 0 {
-			buf.WriteString("ssh_authorized_keys:\n")
-			for _, key := range sshKeys {
-				fmt.Fprintf(&buf, "  - %s\n", key)
-			}
-		}
-	}
 	if user == "" {
 		user = "ubuntu"
 	}
@@ -139,6 +130,17 @@ func GenerateUserDataFromString(hostname, sshKey, user, password string) []byte 
 	fmt.Fprintf(&buf, "    sudo: ['ALL=(ALL) NOPASSWD:ALL']\n")
 	fmt.Fprintf(&buf, "    shell: /bin/bash\n")
 	fmt.Fprintf(&buf, "    lock_passwd: false\n")
+	if sshKey != "" {
+		sshKeys := strings.Split(sshKey, "\n")
+		buf.WriteString("    ssh_authorized_keys:\n")
+		for _, key := range sshKeys {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			fmt.Fprintf(&buf, "      - %s\n", key)
+		}
+	}
 	if password != "" {
 		fmt.Fprintf(&buf, "    passwd: %s\n", password)
 	}
