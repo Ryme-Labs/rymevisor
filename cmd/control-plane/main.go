@@ -20,6 +20,7 @@ import (
 
 func main() {
 	bootstrap.Run(context.Background(), bootstrap.Options{ServiceName: "control-plane", NeedDB: true, NeedNATS: true}, func(ctx context.Context, cfg *config.Config, logger *zap.Logger, pool *pgxpool.Pool, js jetstream.JetStream) error {
+		cfg.Server.Addr = config.ResolveServerAddr(cfg.Server.Addr, "control-plane")
 		vmRepo := postgres.NewVMRepository(pool)
 		nodeRepo := postgres.NewNodeRepository(pool)
 		imageRepo := postgres.NewImageRepository(pool)
