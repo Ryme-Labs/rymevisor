@@ -492,6 +492,14 @@ func (s *Service) PowerOn(ctx context.Context, id string) (*domain.VirtualMachin
 	return vm, nil
 }
 
+func (s *Service) nodeCommandSubject(ctx context.Context, nodeID, action string) string {
+	subjectNode := nodeID
+	if n, err := s.nodeRepo.GetByID(ctx, nodeID); err == nil && n != nil && n.Name != "" {
+		subjectNode = n.Name
+	}
+	return inats.SubjectForNode(subjectNode, action)
+}
+
 func (s *Service) publishVMStart(ctx context.Context, vm *domain.VirtualMachine) error {
 	if s.publisher == nil {
 		return nil
