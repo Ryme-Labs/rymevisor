@@ -53,6 +53,7 @@ func GenerateISO(ctx context.Context, outputDir string, meta, user, network []by
 	isoPath := filepath.Join(outputDir, "cidata.iso")
 	cmd := exec.CommandContext(ctx, "genisoimage",
 		"-output", isoPath,
+		"-volid", "cidata",
 		"-v", "-J",
 		"-joliet-long",
 		"meta-data", "user-data", "network-config",
