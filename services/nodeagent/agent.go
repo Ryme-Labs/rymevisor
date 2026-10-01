@@ -102,12 +102,13 @@ func NewAgent(nodeID, hostname string, js jetstream.JetStream, logger *zap.Logge
 		js:          js,
 		logger:      logger,
 		baseDir:     baseDir,
+		imagesDir:   imagesDir,
 		heartbeatCh: make(chan struct{}, 1),
 	}
 }
 
 func (a *Agent) ImagesDir() string {
-	return "/var/lib/rymevisor/images"
+	return a.imagesDir
 }
 
 func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) error {
