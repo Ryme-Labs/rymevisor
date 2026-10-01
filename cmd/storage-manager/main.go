@@ -18,6 +18,7 @@ import (
 
 func main() {
 	bootstrap.Run(context.Background(), bootstrap.Options{ServiceName: "storage-manager", NeedDB: true}, func(ctx context.Context, cfg *config.Config, logger *zap.Logger, pool *pgxpool.Pool, _ jetstream.JetStream) error {
+		cfg.Server.Addr = config.ResolveServerAddr(cfg.Server.Addr, "storage-manager")
 		poolRepo := postgres.NewStoragePoolRepository(pool)
 		volumeRepo := postgres.NewVolumeRepository(pool)
 		snapRepo := postgres.NewSnapshotRepository(pool)
@@ -28,6 +29,7 @@ func main() {
 		r := chi.NewRouter()
 		r.Use(middleware.RequestID)
 		r.Use(middleware.RealIP)
+		r.Use(middleware.RequireAPIKey)
 		r.Use(middleware.Logger)
 		r.Use(middleware.Recoverer)
 		r.Use(middleware.CORS())
