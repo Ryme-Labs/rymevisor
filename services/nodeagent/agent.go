@@ -28,6 +28,7 @@ type Agent struct {
 	js          jetstream.JetStream
 	logger      *zap.Logger
 	baseDir     string
+	imagesDir   string
 	heartbeatCh chan struct{}
 }
 
@@ -86,8 +87,13 @@ type VMCommandResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-func NewAgent(nodeID, hostname string, js jetstream.JetStream, logger *zap.Logger) *Agent {
-	baseDir := "/var/lib/rymevisor/vms"
+func NewAgent(nodeID, hostname string, js jetstream.JetStream, logger *zap.Logger, baseDir, imagesDir string) *Agent {
+	if baseDir == "" {
+		baseDir = "/var/lib/rymevisor/vms"
+	}
+	if imagesDir == "" {
+		imagesDir = "/var/lib/rymevisor/images"
+	}
 
 	return &Agent{
 		nodeID:      nodeID,
