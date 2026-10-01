@@ -705,7 +705,7 @@ func (s *Service) Reboot(ctx context.Context, id string, force bool) (*domain.Vi
 			Force  bool   `json:"force,omitempty"`
 		}
 		data, _ := json.Marshal(cmd{Action: "reboot", VMID: id, Force: force})
-		_ = s.publisher.Publish(ctx, inats.SubjectForNode(*vm.NodeID, "reboot"), data)
+		_ = s.publisher.Publish(ctx, s.nodeCommandSubject(ctx, *vm.NodeID, "reboot"), data)
 	}
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusRunning); err != nil {
