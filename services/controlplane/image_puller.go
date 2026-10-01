@@ -345,20 +345,21 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 
 
 	ext := filepath.Ext(url)
-	isQcow2 := ext == ".qcow2"
-	needsConvert := !isQcow2
+	sourceFmt := detectImageFormat(tmpPath)
+	if sourceFmt == "" {
+		if ext == ".qcow2" {
+			sourceFmt = "qcow2"
+		} else {
+			sourceFmt = "raw"
+		}
+	}
+	needsConvert := sourceFmt != "qcow2"
 
 	var sizeBytes int64 = totalWritten
 	var finalChecksum = checksum
 
 	if needsConvert {
-		logger.Info("converting image to qcow2", zap.String("tmp", tmpPath), zap.String("final", finalPath))
-
-
-		sourceFmt := "raw"
-		if ext == ".qcow2" {
-			sourceFmt = "qcow2"
-		}
+		logger.Info("converting image to qcow2", zap.String("tmp", tmpPath), zap.String("final", finalPath), zap.String("source_format", sourceFmt))
 
 		os.Remove(finalPath)
 		if err := qcow2.Convert(ctx, tmpPath, finalPath, sourceFmt, "qcow2"); err != nil {
@@ -404,6 +405,22 @@ func (p *Puller) download(ctx context.Context, img *domain.Image, url string) {
 	}
 }
 
+
+func detectImageFormat(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return ""
+	}
+	if magic[0] == 'Q' && magic[1] == 'F' && magic[2] == 'I' && magic[3] == 0xfb {
+		return "qcow2"
+	}
+	return "raw"
+}
 
 func (p *Puller) IsReady(imageID string) bool {
 	path := p.ImagePath(imageID)
