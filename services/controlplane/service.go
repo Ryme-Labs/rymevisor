@@ -664,7 +664,7 @@ func (s *Service) PowerOff(ctx context.Context, id string, force bool) (*domain.
 			Force  bool   `json:"force,omitempty"`
 		}
 		data, _ := json.Marshal(cmd{Action: "stop", VMID: id, Force: force})
-		_ = s.publisher.Publish(ctx, inats.SubjectForNode(*vm.NodeID, "stop"), data)
+		_ = s.publisher.Publish(ctx, s.nodeCommandSubject(ctx, *vm.NodeID, "stop"), data)
 	}
 
 	if err := s.vmRepo.UpdateStatus(ctx, id, domain.VMStatusStopped); err != nil {
