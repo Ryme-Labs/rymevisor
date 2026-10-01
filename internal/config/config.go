@@ -57,6 +57,26 @@ type NodeConfig struct {
 	HeartbeatInt time.Duration `yaml:"heartbeat_interval"`
 }
 
+var ServicePorts = map[string]string{
+	"api-gateway":       ":8080",
+	"control-plane":     ":8081",
+	"networking-engine": ":8083",
+	"storage-manager":   ":8084",
+	"scheduler":         ":8085",
+}
+
+func ResolveServerAddr(configured, service string) string {
+	if service == "api-gateway" || service == "" {
+		return configured
+	}
+	if configured == ":8080" {
+		if p, ok := ServicePorts[service]; ok {
+			return p
+		}
+	}
+	return configured
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{
 		Server: ServerConfig{
