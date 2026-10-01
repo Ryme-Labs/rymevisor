@@ -211,33 +211,33 @@ start_services() {
   touch "$PIDS_FILE"
 
   if [ -f "$BIN_DIR/control-plane" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8080" "$BIN_DIR/control-plane" > "$LOG_DIR/control-plane.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8081" "$BIN_DIR/control-plane" > "$LOG_DIR/control-plane.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
-    log "  control-plane  -> :8080"
+    log "  control-plane  -> :8081"
   fi
 
   if [ -f "$BIN_DIR/scheduler" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8083" "$BIN_DIR/scheduler" > "$LOG_DIR/scheduler.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8085" "$BIN_DIR/scheduler" > "$LOG_DIR/scheduler.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
-    log "  scheduler      -> :8083"
+    log "  scheduler      -> :8085"
   fi
 
   if [ -f "$BIN_DIR/networking-engine" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8084" "$BIN_DIR/networking-engine" > "$LOG_DIR/networking-engine.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8083" "$BIN_DIR/networking-engine" > "$LOG_DIR/networking-engine.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
-    log "  networking     -> :8084"
+    log "  networking     -> :8083"
   fi
 
   if [ -f "$BIN_DIR/storage-manager" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8085" "$BIN_DIR/storage-manager" > "$LOG_DIR/storage-manager.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8084" "$BIN_DIR/storage-manager" > "$LOG_DIR/storage-manager.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
-    log "  storage        -> :8085"
+    log "  storage        -> :8084"
   fi
 
   if [ -f "$BIN_DIR/api-gateway" ]; then
-    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8081" RYMEVISOR_CONTROL_PLANE_URL="localhost:8080" RYMEVISOR_NETWORK_URL="localhost:8084" RYMEVISOR_STORAGE_URL="localhost:8085" RYMEVISOR_SCHEDULER_URL="localhost:8083" "$BIN_DIR/api-gateway" > "$LOG_DIR/api-gateway.log" 2>&1 &
+    RYMEVISOR_DATABASE_URL="$DB_URL" RYMEVISOR_NATS_URL="$NATS_URL" RYMEVISOR_JWT_SECRET="$JWT_SECRET" RYMEVISOR_LOG_LEVEL=debug RYMEVISOR_LOG_FORMAT=console RYMEVISOR_SERVER_ADDR=":8080" RYMEVISOR_CONTROL_PLANE_URL="localhost:8081" RYMEVISOR_NETWORK_URL="localhost:8083" RYMEVISOR_STORAGE_URL="localhost:8084" RYMEVISOR_SCHEDULER_URL="localhost:8085" "$BIN_DIR/api-gateway" > "$LOG_DIR/api-gateway.log" 2>&1 &
     echo $! >> "$PIDS_FILE"
-    log "  api-gateway    -> :8081"
+    log "  api-gateway    -> :8080"
   fi
 
   if [ -f "$BIN_DIR/node-agent" ]; then
