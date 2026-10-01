@@ -264,16 +264,16 @@ check_status() {
     fi
   }
 
-  check_one "control-plane" "8080" "/health/live"
-  check_one "scheduler" "8083" "/health/live"
-  check_one "networking-engine" "8084" "/health/live"
-  check_one "storage-manager" "8085" "/health/live"
-  check_one "api-gateway" "8081" "/health"
+  check_one "control-plane" "8081" "/health/live"
+  check_one "scheduler" "8085" "/health/live"
+  check_one "networking-engine" "8083" "/health/live"
+  check_one "storage-manager" "8084" "/health/live"
+  check_one "api-gateway" "8080" "/health"
 
   echo ""
   if [ -n "$API_KEY" ]; then
     log "API Key: $API_KEY"
-    log "Usage: curl -H 'X-API-Key: $API_KEY' http://localhost:8081/api/v1/vms"
+    log "Usage: curl -H 'X-API-Key: $API_KEY' http://localhost:8080/api/v1/vms"
     echo ""
   fi
   log "Logs:  tail -f $LOG_DIR/<service>.log"
