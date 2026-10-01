@@ -16,6 +16,7 @@ import (
 
 func main() {
 	bootstrap.Run(context.Background(), bootstrap.Options{ServiceName: "api-gateway"}, func(ctx context.Context, cfg *config.Config, logger *zap.Logger, _ *pgxpool.Pool, _ jetstream.JetStream) error {
+		cfg.Server.Addr = config.ResolveServerAddr(cfg.Server.Addr, "api-gateway")
 		svcCfg := handler.ServiceConfig{
 			ControlPlaneURL: config.EnvOrDefault("RYMEVISOR_CONTROL_PLANE_URL", "localhost:8081"),
 			NetworkURL:      config.EnvOrDefault("RYMEVISOR_NETWORK_URL", "localhost:8083"),
