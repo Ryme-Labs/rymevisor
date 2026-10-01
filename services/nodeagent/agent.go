@@ -558,6 +558,7 @@ func (a *Agent) handleCommand(ctx context.Context, msg jetstream.Msg) {
 	}
 
 	if err != nil {
+		a.logger.Error("vm command failed", zap.String("vm_id", cmd.VMID), zap.String("action", cmd.Action), zap.Error(err))
 		result.Error = err.Error()
 		result.Status = "error"
 	} else {
