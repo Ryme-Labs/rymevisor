@@ -274,9 +274,9 @@ func (r *VMRepository) Update(ctx context.Context, vm *domain.VirtualMachine) er
 
 	_, err = r.pool.Exec(ctx, `
 		UPDATE virtual_machines
-		SET name = $1, metadata = $2, labels = $3, tags = $4, updated_at = now()
-		WHERE id = $5
-	`, vm.Name, metadataJSON, labelsJSON, tagsJSON, vm.ID)
+		SET name = $1, vcpus = $2, memory_mb = $3, metadata = $4, labels = $5, tags = $6, updated_at = now()
+		WHERE id = $7
+	`, vm.Name, vm.VCpus, vm.MemoryMB, metadataJSON, labelsJSON, tagsJSON, vm.ID)
 	if err != nil {
 		return fmt.Errorf("vm_repo: update: %w", err)
 	}
