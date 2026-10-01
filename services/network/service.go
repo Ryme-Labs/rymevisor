@@ -43,6 +43,10 @@ func (s *Service) CreateNetwork(ctx context.Context, req *domain.CreateNetworkRe
 		return nil, fmt.Errorf("invalid CIDR: %w", err)
 	}
 
+	if req.OrganizationID == "" {
+		req.OrganizationID = "00000000-0000-0000-0000-000000000000"
+	}
+
 	network := &domain.PrivateNetwork{
 		ID:               uuid.New().String(),
 		Name:             req.Name,
