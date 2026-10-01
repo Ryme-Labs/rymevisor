@@ -210,6 +210,7 @@ func (a *Agent) StartVM(ctx context.Context, vmID string, cfg *VMStartConfig) er
 		}
 		netIfaces = append(netIfaces, cloudinit.NetworkInterface{
 			Name:        n.Name,
+			MACAddress:  n.MACAddress,
 			Addresses:   []string{cidr},
 			Gateway:     n.Gateway,
 			Nameservers: []string{"8.8.8.8", "8.8.4.4"},
