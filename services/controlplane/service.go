@@ -602,7 +602,7 @@ func (s *Service) publishVMStart(ctx context.Context, vm *domain.VirtualMachine)
 	}
 	cmd := vmCommand{Action: "start", VMID: vm.ID, Config: cfg}
 	data, _ := json.Marshal(cmd)
-	subject := inats.SubjectForNode(*vm.NodeID, "start")
+	subject := s.nodeCommandSubject(ctx, *vm.NodeID, "start")
 	return s.publisher.Publish(ctx, subject, data)
 }
 
