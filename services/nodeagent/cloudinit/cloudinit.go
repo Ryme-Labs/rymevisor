@@ -87,6 +87,10 @@ func GenerateNetworkConfig(cfg NetworkConfig) []byte {
 			name = "ens3"
 		}
 		fmt.Fprintf(&buf, "  %s:\n", name)
+		if iface.MACAddress != "" {
+			buf.WriteString("    match:\n")
+			fmt.Fprintf(&buf, "      macaddress: \"%s\"\n", strings.ToLower(iface.MACAddress))
+		}
 		fmt.Fprintf(&buf, "    dhcp4: false\n")
 
 		if len(iface.Addresses) > 0 {
