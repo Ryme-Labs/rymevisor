@@ -19,11 +19,13 @@ import (
 
 func main() {
 	bootstrap.Run(context.Background(), bootstrap.Options{ServiceName: "scheduler"}, func(ctx context.Context, cfg *config.Config, logger *zap.Logger, _ *pgxpool.Pool, _ jetstream.JetStream) error {
+		cfg.Server.Addr = config.ResolveServerAddr(cfg.Server.Addr, "scheduler")
 		repo := schedulerpostgres.NewSchedulerRepository()
 		svc := scheduler.NewService(repo, nil)
 		h := handler.NewHandler(svc)
 		hh := health.NewHandler()
 		r := chi.NewRouter()
+		r.Use(middleware.RequireAPIKey)
 		h.Register(r)
 		r.Handle("/health/live", hh.Liveness())
 		r.Handle("/health/ready", hh.Readiness())
